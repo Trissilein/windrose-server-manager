@@ -143,7 +143,7 @@ export default function ServerConfig({ config }: Props) {
         </label>
 
         <label className="form-field form-toggle">
-          <span>Direktverbindung</span>
+          <span>Direktverbindung (LAN)</span>
           <input
             type="checkbox"
             checked={d.UseDirectConnection}
@@ -151,6 +151,33 @@ export default function ServerConfig({ config }: Props) {
             onChange={(e) => update("UseDirectConnection", e.target.checked)}
           />
         </label>
+
+        {d.UseDirectConnection && (
+          <>
+            <label className="form-field">
+              <span>Server-IP (LAN)</span>
+              <input
+                type="text"
+                placeholder="z.B. 192.168.1.100"
+                value={d.DirectConnectionServerAddress}
+                disabled={disabled}
+                onChange={(e) => update("DirectConnectionServerAddress", e.target.value)}
+              />
+            </label>
+
+            <label className="form-field">
+              <span>Server-Port</span>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={d.DirectConnectionServerPort}
+                disabled={disabled}
+                onChange={(e) => update("DirectConnectionServerPort", Number(e.target.value))}
+              />
+            </label>
+          </>
+        )}
 
         <label className="form-field form-toggle">
           <span>Auto-Backup bei Absturz</span>
