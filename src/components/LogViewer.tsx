@@ -5,36 +5,30 @@ import type { LogCategory, LogEvent } from "../types";
 
 interface CatMeta {
   label: string;
-  color: string;        // CSS color for the chip + log line accent
-  bg: string;           // rgba background for chip
-  border: string;       // rgba border for chip
+  icon: string;
+  color: string;
+  bg: string;
+  border: string;
 }
 
 const CAT_META: Record<LogCategory, CatMeta> = {
-  // Server lifecycle — blau
-  ServerInfo:      { label: "Server-Info",    color: "#7b8aff", bg: "rgba(91,106,240,0.12)",  border: "rgba(91,106,240,0.35)" },
-  ServerReady:     { label: "Bereit",          color: "#34c97e", bg: "rgba(52,201,126,0.12)",  border: "rgba(52,201,126,0.35)" },
-  Auth:            { label: "Auth",            color: "#7b8aff", bg: "rgba(91,106,240,0.12)",  border: "rgba(91,106,240,0.35)" },
-  Registration:    { label: "Registrierung",   color: "#7b8aff", bg: "rgba(91,106,240,0.12)",  border: "rgba(91,106,240,0.35)" },
-  Shutdown:        { label: "Shutdown",        color: "#f0b429", bg: "rgba(240,180,41,0.12)",  border: "rgba(240,180,41,0.35)" },
-  // World / Map — grün
-  WorldLoad:       { label: "Welt",            color: "#34c97e", bg: "rgba(52,201,126,0.10)",  border: "rgba(52,201,126,0.30)" },
-  MapLoad:         { label: "Map",             color: "#34c97e", bg: "rgba(52,201,126,0.10)",  border: "rgba(52,201,126,0.30)" },
-  // Network — cyan
-  ConnectionInfo:  { label: "Verbindung",      color: "#4dd0e1", bg: "rgba(77,208,225,0.10)",  border: "rgba(77,208,225,0.30)" },
-  RegionPing:      { label: "Ping",            color: "#4dd0e1", bg: "rgba(77,208,225,0.10)",  border: "rgba(77,208,225,0.30)" },
-  // Players — lila
-  PlayerConnect:   { label: "Beitritt",        color: "#b39ddb", bg: "rgba(179,157,219,0.12)", border: "rgba(179,157,219,0.35)" },
-  PlayerDisconnect:{ label: "Verlassen",       color: "#b39ddb", bg: "rgba(179,157,219,0.12)", border: "rgba(179,157,219,0.35)" },
-  // Backup — orange
-  BackupStart:     { label: "Backup Start",    color: "#f0b429", bg: "rgba(240,180,41,0.10)",  border: "rgba(240,180,41,0.30)" },
-  BackupDone:      { label: "Backup Ende",     color: "#f0b429", bg: "rgba(240,180,41,0.10)",  border: "rgba(240,180,41,0.30)" },
-  // Issues — rot/gelb
-  Error:           { label: "Fehler",          color: "#e05252", bg: "rgba(224,82,82,0.12)",   border: "rgba(224,82,82,0.35)" },
-  Warning:         { label: "Warnung",         color: "#f0b429", bg: "rgba(240,180,41,0.12)",  border: "rgba(240,180,41,0.35)" },
-  // Noise — grau
-  BootNoise:       { label: "Boot-Noise",      color: "#666e99", bg: "rgba(102,110,153,0.10)", border: "rgba(102,110,153,0.30)" },
-  Unknown:         { label: "Sonstige",        color: "#666e99", bg: "rgba(102,110,153,0.10)", border: "rgba(102,110,153,0.30)" },
+  ServerInfo:      { label: "Server-Info",    icon: "ℹ",  color: "#7b8aff", bg: "rgba(91,106,240,0.12)",  border: "rgba(91,106,240,0.35)" },
+  ServerReady:     { label: "Bereit",          icon: "✓",  color: "#34c97e", bg: "rgba(52,201,126,0.12)",  border: "rgba(52,201,126,0.35)" },
+  Auth:            { label: "Auth",            icon: "🔑", color: "#7b8aff", bg: "rgba(91,106,240,0.12)",  border: "rgba(91,106,240,0.35)" },
+  Registration:    { label: "Registrierung",   icon: "📋", color: "#7b8aff", bg: "rgba(91,106,240,0.12)",  border: "rgba(91,106,240,0.35)" },
+  Shutdown:        { label: "Shutdown",        icon: "■",  color: "#f0b429", bg: "rgba(240,180,41,0.12)",  border: "rgba(240,180,41,0.35)" },
+  WorldLoad:       { label: "Welt",            icon: "🌍", color: "#34c97e", bg: "rgba(52,201,126,0.10)",  border: "rgba(52,201,126,0.30)" },
+  MapLoad:         { label: "Karte",           icon: "🗺",  color: "#34c97e", bg: "rgba(52,201,126,0.10)",  border: "rgba(52,201,126,0.30)" },
+  ConnectionInfo:  { label: "Verbindung",      icon: "🔗", color: "#4dd0e1", bg: "rgba(77,208,225,0.10)",  border: "rgba(77,208,225,0.30)" },
+  RegionPing:      { label: "Ping",            icon: "📡", color: "#4dd0e1", bg: "rgba(77,208,225,0.10)",  border: "rgba(77,208,225,0.30)" },
+  PlayerConnect:   { label: "Beitritt",        icon: "→",  color: "#b39ddb", bg: "rgba(179,157,219,0.12)", border: "rgba(179,157,219,0.35)" },
+  PlayerDisconnect:{ label: "Verlassen",       icon: "←",  color: "#b39ddb", bg: "rgba(179,157,219,0.12)", border: "rgba(179,157,219,0.35)" },
+  BackupStart:     { label: "Backup Start",    icon: "↓",  color: "#f0b429", bg: "rgba(240,180,41,0.10)",  border: "rgba(240,180,41,0.30)" },
+  BackupDone:      { label: "Backup Ende",     icon: "✓",  color: "#f0b429", bg: "rgba(240,180,41,0.10)",  border: "rgba(240,180,41,0.30)" },
+  Error:           { label: "Fehler",          icon: "✕",  color: "#e05252", bg: "rgba(224,82,82,0.12)",   border: "rgba(224,82,82,0.35)" },
+  Warning:         { label: "Warnung",         icon: "⚠",  color: "#f0b429", bg: "rgba(240,180,41,0.12)",  border: "rgba(240,180,41,0.35)" },
+  BootNoise:       { label: "Boot-Noise",      icon: "·",  color: "#666e99", bg: "rgba(102,110,153,0.10)", border: "rgba(102,110,153,0.30)" },
+  Unknown:         { label: "Sonstige",        icon: "·",  color: "#666e99", bg: "rgba(102,110,153,0.10)", border: "rgba(102,110,153,0.30)" },
 };
 
 const ALL_CATEGORIES: LogCategory[] = [
@@ -48,6 +42,18 @@ const ALL_CATEGORIES: LogCategory[] = [
 ];
 
 const DEFAULT_HIDDEN: Set<LogCategory> = new Set(["BootNoise", "Unknown"]);
+
+// Strip known UE5/R5 log prefixes from Unknown/BootNoise lines so the text is readable
+// e.g. "R5LogNet: Warning: Something" → "Something"
+const LOG_PREFIX_RE = /^[A-Za-z0-9_]+:\s*(?:Warning:|Log:|Error:|Display:)?\s*/;
+
+function renderSummary(ev: LogEvent, showRaw: boolean): string {
+  if (showRaw) return ev.raw_line;
+  if (ev.category === "Unknown" || ev.category === "BootNoise") {
+    return ev.summary.replace(LOG_PREFIX_RE, "").trim() || ev.summary;
+  }
+  return ev.summary;
+}
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
@@ -67,8 +73,8 @@ function FilterChip({ cat, count, hidden, onToggle }: ChipProps) {
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 5,
-        padding: "3px 10px",
+        gap: 4,
+        padding: "3px 9px",
         borderRadius: 20,
         fontSize: 11,
         fontWeight: 600,
@@ -82,6 +88,7 @@ function FilterChip({ cat, count, hidden, onToggle }: ChipProps) {
         userSelect: "none",
       }}
     >
+      <span style={{ fontSize: 10, opacity: 0.9 }}>{meta.icon}</span>
       {meta.label}
       {count > 0 && (
         <span style={{
@@ -91,6 +98,7 @@ function FilterChip({ cat, count, hidden, onToggle }: ChipProps) {
           padding: "0 5px",
           fontSize: 10,
           fontWeight: 700,
+          marginLeft: 2,
         }}>
           {count > 999 ? "999+" : count}
         </span>
@@ -126,7 +134,6 @@ export default function LogViewer({ events }: Props) {
   function showAll() { setHiddenCats(new Set()); }
   function hideAll() { setHiddenCats(new Set(ALL_CATEGORIES)); }
 
-  // Count events per category
   const counts = useMemo(() => {
     const map: Partial<Record<LogCategory, number>> = {};
     for (const ev of events) {
@@ -189,9 +196,11 @@ export default function LogViewer({ events }: Props) {
             >
               <span className="log-ts">{ev.timestamp ?? ""}</span>
               <span className="log-cat" style={{ color: meta.color }}>
-                [{meta.label}]
+                {meta.icon} {meta.label}
               </span>
-              <span className="log-text">{showRaw ? ev.raw_line : ev.summary}</span>
+              <span className="log-text">
+                {renderSummary(ev, showRaw)}
+              </span>
             </div>
           );
         })}

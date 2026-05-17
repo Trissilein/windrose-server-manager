@@ -121,7 +121,11 @@ impl ServerProcess {
                             state.status = ServerStatus::Stopping;
                         }
                         LogCategory::PlayerConnect => {
-                            let name = event.summary.trim().to_string();
+                            let name = event.summary
+                                .strip_prefix("Beitritt: ")
+                                .unwrap_or(&event.summary)
+                                .trim()
+                                .to_string();
                             if !name.is_empty() {
                                 if !state.players.iter().any(|p| p.name == name) {
                                     state.players.push(PlayerInfo {
@@ -133,7 +137,12 @@ impl ServerProcess {
                             }
                         }
                         LogCategory::PlayerDisconnect => {
-                            let name = event.summary.trim().to_string();
+                            let name = event.summary
+                                .strip_prefix("Verlassen: ")
+                                .or_else(|| event.summary.strip_prefix("Verbindung getrennt: "))
+                                .unwrap_or(&event.summary)
+                                .trim()
+                                .to_string();
                             if !name.is_empty() {
                                 state.players.retain(|p| p.name != name);
                                 state.player_count = Some(state.players.len() as u32);

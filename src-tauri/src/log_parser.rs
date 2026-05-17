@@ -10,13 +10,40 @@ struct LogPattern {
     summary_template: &'static str,
 }
 
+// Strips [000000]-style inline frame numbers that R5LogNet embeds in message bodies
+static INLINE_FRAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[\d{4,6}\]\s*").unwrap()
+});
+
+fn strip_inline_frames(s: &str) -> String {
+    INLINE_FRAME_RE.replace_all(s, "").trim().to_string()
+}
+
 static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
     vec![
+        // ── R5LogNet Warning: lines are gRPC / network startup noise ──────────
         LogPattern {
-            regex: Regex::new(r"^Log(PluginManager|Config: Set CVar|Init:|PakFile|IoDispatcher)").unwrap(),
+            regex: Regex::new(r"^R5LogNet: Warning:").unwrap(),
             category: LogCategory::BootNoise,
             summary_template: "",
         },
+        // ── Other UE5 subsystem Warning: lines that are always noise ──────────
+        LogPattern {
+            regex: Regex::new(
+                r"^(LogStringTable|LogUObjectGlobals|LogUObjectArray|LogNetVersion|LogOnlineSubsystem|LogTemp|LogScript): Warning:"
+            ).unwrap(),
+            category: LogCategory::BootNoise,
+            summary_template: "",
+        },
+        // ── Known UE5 boot/init prefixes ──────────────────────────────────────
+        LogPattern {
+            regex: Regex::new(
+                r"^Log(PluginManager|Config: Set CVar|Init:|PakFile|IoDispatcher|NetVersion|OnlineSubsystem|Streaming|DerivedDataCache|ShaderLibrary|Class|Linker|Package)"
+            ).unwrap(),
+            category: LogCategory::BootNoise,
+            summary_template: "",
+        },
+        // ── Server lifecycle ──────────────────────────────────────────────────
         LogPattern {
             regex: Regex::new(r"R5LogGameInstance.*Version\s+=\s+(.+)").unwrap(),
             category: LogCategory::ServerInfo,
@@ -25,45 +52,39 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
         LogPattern {
             regex: Regex::new(r"R5BLDalAsyncQueue::LoadDb.*Successfully loaded DB (.+)").unwrap(),
             category: LogCategory::WorldLoad,
-            summary_template: "Welt geladen: {1}",
+            summary_template: "Spielwelt geladen: {1}",
         },
-        // Real Windrose ready signal
+        // Primary Windrose ready signal
         LogPattern {
             regex: Regex::new(r"UR5EcCollector::OnResponse.*New settings received").unwrap(),
             category: LogCategory::ServerReady,
-            summary_template: "SERVER BEREIT",
+            summary_template: "Server ist bereit",
         },
         // Fallback for other UE5 servers
         LogPattern {
             regex: Regex::new(r"SetIsReadyForHostOwnerConnect.*Host server is ready").unwrap(),
             category: LogCategory::ServerReady,
-            summary_template: "SERVER BEREIT",
+            summary_template: "Server ist bereit",
         },
+        // ── Network / connectivity ────────────────────────────────────────────
         LogPattern {
             regex: Regex::new(r"R5LogPinger.*Pinged server info.*Server: '([^']+)'.*AveragePingMs: ([\d.]+)").unwrap(),
             category: LogCategory::RegionPing,
-            summary_template: "Ping {1}: {2}ms",
-        },
-        LogPattern {
-            regex: Regex::new(r"SaveBackupsSync.*Start sync backups").unwrap(),
-            category: LogCategory::BackupStart,
-            summary_template: "Backup gestartet",
-        },
-        LogPattern {
-            regex: Regex::new(r"OnSaveBackupFinished.*finished successfully").unwrap(),
-            category: LogCategory::BackupDone,
-            summary_template: "Backup abgeschlossen",
+            summary_template: "Ping {1}: {2} ms",
         },
         LogPattern {
             regex: Regex::new(r#""InviteCode":\s*"([^"]+)""#).unwrap(),
             category: LogCategory::ConnectionInfo,
             summary_template: "Invite Code: {1}",
         },
+        // ── Map / world loading ───────────────────────────────────────────────
+        // Extract only the filename from the UE path (e.g. /Game/R5/Levels/R5Island_P → R5Island_P)
         LogPattern {
-            regex: Regex::new(r"LogLoad: Took ([\d.]+) seconds to LoadMap\((.+)\)").unwrap(),
+            regex: Regex::new(r"LogLoad: Took ([\d.]+) seconds to LoadMap\((?:.*/)?([^/)]+)\)").unwrap(),
             category: LogCategory::MapLoad,
-            summary_template: "Map geladen: {2} ({1}s)",
+            summary_template: "Karte geladen: {2} ({1}s)",
         },
+        // ── Auth / registration ───────────────────────────────────────────────
         LogPattern {
             regex: Regex::new(r"OnLoginFinished.*Login finished successfully").unwrap(),
             category: LogCategory::Auth,
@@ -74,30 +95,43 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::Registration,
             summary_template: "Server registriert",
         },
+        // ── Backup ────────────────────────────────────────────────────────────
+        LogPattern {
+            regex: Regex::new(r"SaveBackupsSync.*Start sync backups").unwrap(),
+            category: LogCategory::BackupStart,
+            summary_template: "Backup gestartet",
+        },
+        LogPattern {
+            regex: Regex::new(r"OnSaveBackupFinished.*finished successfully").unwrap(),
+            category: LogCategory::BackupDone,
+            summary_template: "Backup abgeschlossen",
+        },
+        // ── Shutdown ──────────────────────────────────────────────────────────
         LogPattern {
             regex: Regex::new(r"Engine exit requested|RequestExit").unwrap(),
             category: LogCategory::Shutdown,
-            summary_template: "Server faehrt herunter",
+            summary_template: "Server fährt herunter",
         },
+        // ── Players ───────────────────────────────────────────────────────────
         LogPattern {
             regex: Regex::new(r"LogNet.*Join request.*[?&]Name=([^&\s\]]+)").unwrap(),
             category: LogCategory::PlayerConnect,
-            summary_template: "{1}",
+            summary_template: "Beitritt: {1}",
         },
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogin:\s+(\S+)").unwrap(),
             category: LogCategory::PlayerConnect,
-            summary_template: "{1}",
+            summary_template: "Beitritt: {1}",
         },
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogout:\s+(\S+)").unwrap(),
             category: LogCategory::PlayerDisconnect,
-            summary_template: "{1}",
+            summary_template: "Verlassen: {1}",
         },
         LogPattern {
             regex: Regex::new(r"LogNet.*UNetConnection::Close.*RemoteAddr=([^,\s]+)").unwrap(),
             category: LogCategory::PlayerDisconnect,
-            summary_template: "{1}",
+            summary_template: "Verbindung getrennt: {1}",
         },
     ]
 });
@@ -108,8 +142,7 @@ static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 // Parse UE5 timestamp (UTC) and convert to local time for display
 fn convert_timestamp(raw_ts: &str) -> String {
-    // UE5 format: 2026.05.17-16.11.17:016
-    // Treat as UTC, convert to local timezone
+    // UE5 format: 2026.05.17-16.11.17:016 — treat as UTC, convert to local timezone
     if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(raw_ts, "%Y.%m.%d-%H.%M.%S:%3f") {
         let utc = Utc.from_utc_datetime(&ndt);
         return utc.with_timezone(&Local).format("%H:%M:%S").to_string();
@@ -135,9 +168,9 @@ pub fn parse_line(raw: &str) -> LogEvent {
                     summary = summary.replace(&format!("{{{}}}", i), m.as_str());
                 }
             }
-            // For BootNoise with empty template keep it short; others: full content
+            // Empty template = BootNoise: store truncated content (stripped of inline frame numbers)
             if summary.is_empty() {
-                summary = content.chars().take(120).collect();
+                summary = strip_inline_frames(content).chars().take(120).collect();
             }
             return LogEvent {
                 timestamp,
@@ -150,6 +183,7 @@ pub fn parse_line(raw: &str) -> LogEvent {
         }
     }
 
+    // Fallback classification
     let (level, category) = if content.contains("Error:") || content.contains("Error ") {
         (LogLevel::Error, LogCategory::Error)
     } else if content.contains("Warning:") {
@@ -158,11 +192,11 @@ pub fn parse_line(raw: &str) -> LogEvent {
         (LogLevel::Debug, LogCategory::Unknown)
     };
 
-    // No truncation for Error/Warning — show full content
-    // Unknown gets capped at 200 to avoid giant noise lines
     let summary = match category {
-        LogCategory::Error | LogCategory::Warning => content.to_string(),
-        _ => content.chars().take(200).collect(),
+        // Error/Warning: full content, inline frames stripped for readability
+        LogCategory::Error | LogCategory::Warning => strip_inline_frames(content),
+        // Unknown: strip frames + cap at 200 chars to avoid noise walls
+        _ => strip_inline_frames(content).chars().take(200).collect(),
     };
 
     LogEvent {

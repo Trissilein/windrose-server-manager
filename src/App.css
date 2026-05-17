@@ -304,12 +304,18 @@ html, body, #root {
   line-height: 1.6;
 }
 
-.log-line { display: flex; gap: 8px; }
+.log-line {
+  display: grid;
+  grid-template-columns: 62px 118px 1fr;
+  gap: 6px;
+  align-items: baseline;
+  padding: 1px 0;
+}
 .log-line.log-error { color: #f08080; }
 .log-line.log-warning { color: #f0c070; }
-.log-ts { color: var(--muted); flex-shrink: 0; font-size: 11px; }
-.log-cat { flex-shrink: 0; color: var(--accent-hover); font-size: 11px; }
-.log-text { flex: 1; white-space: pre-wrap; word-break: break-all; }
+.log-ts { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.log-cat { color: var(--accent-hover); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-text { white-space: pre-wrap; word-break: break-word; }
 
 /* ── Config forms ────────────────────────────────────────────────── */
 .config-form { max-width: 600px; }
