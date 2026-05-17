@@ -129,6 +129,7 @@ export default function Dashboard({ config, onNavigate }: Props) {
     memory_mb: 0,
     server_name: null,
     password: null,
+    world_id: null,
   });
   const [uptime, setUptime] = useState("–");
   const [recentEvents, setRecentEvents] = useState<LogEvent[]>([]);
@@ -312,6 +313,15 @@ export default function Dashboard({ config, onNavigate }: Props) {
           <div className="info-row">
             <span className="info-label">Name</span>
             <span className="info-val">{state.server_name ?? "–"}</span>
+          </div>
+
+          <div className="info-row">
+            <span className="info-label">Welt</span>
+            <span className="info-val" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
+              {state.world_id
+                ? (config.world_aliases[state.world_id] ?? state.world_id.slice(0, 12) + "…")
+                : "–"}
+            </span>
           </div>
 
           <div className="info-row">

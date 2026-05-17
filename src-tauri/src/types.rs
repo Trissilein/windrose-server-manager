@@ -139,6 +139,7 @@ pub struct ServerStartInfo {
     pub invite_code: String,
     pub password: String,
     pub max_player_count: u32,
+    pub world_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +156,7 @@ pub struct ServerState {
     pub memory_mb: u64,
     pub server_name: Option<String>,
     pub password: Option<String>,
+    pub world_id: Option<String>,
 }
 
 impl Default for ServerState {
@@ -172,6 +174,7 @@ impl Default for ServerState {
             memory_mb: 0,
             server_name: None,
             password: None,
+            world_id: None,
         }
     }
 }
@@ -230,6 +233,7 @@ pub struct WorldInfo {
     pub preset_type: String,
     pub creation_time: f64,
     pub is_active: bool,
+    pub is_archived: bool,
     pub folder_size_bytes: Option<u64>,
 }
 

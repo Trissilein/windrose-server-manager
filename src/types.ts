@@ -28,6 +28,7 @@ export interface ServerState {
   memory_mb: number;
   server_name: string | null;
   password: string | null;
+  world_id: string | null;
 }
 
 export type LogCategory =
@@ -67,6 +68,7 @@ export interface WorldInfo {
   preset_type: string;
   creation_time: number;
   is_active: boolean;
+  is_archived: boolean;
   folder_size_bytes: number | null;
 }
 

@@ -140,6 +140,7 @@ async fn start_server(
             invite_code: p.invite_code.clone(),
             password: p.password.clone(),
             max_player_count: p.max_player_count,
+            world_id: p.world_island_id.clone(),
         }
     });
 
@@ -162,13 +163,40 @@ async fn kick_player(
     state.lock().await.kick_player(&name).await
 }
 
+// ── World-Management Commands ──────────────────────────────────────────────────
+
+#[tauri::command]
+fn activate_world_cmd(server_root: String, world_id: String) -> Result<(), String> {
+    world_manager::activate_world(&server_root, &world_id)
+}
+
+#[tauri::command]
+fn archive_world_cmd(server_root: String, world_id: String) -> Result<(), String> {
+    world_manager::archive_world(&server_root, &world_id)
+}
+
+#[tauri::command]
+fn unarchive_world_cmd(server_root: String, world_id: String) -> Result<(), String> {
+    world_manager::unarchive_world(&server_root, &world_id)
+}
+
+#[tauri::command]
+fn delete_world_cmd(server_root: String, world_id: String, archived: bool) -> Result<(), String> {
+    world_manager::delete_world(&server_root, &world_id, archived)
+}
+
+#[tauri::command]
+fn get_world_json(server_root: String, world_id: String, archived: bool) -> Result<String, String> {
+    world_manager::get_world_json(&server_root, &world_id, archived)
+}
+
 #[tauri::command]
 fn get_worlds_for_launch(
     server_root: String,
     aliases: std::collections::HashMap<String, String>,
 ) -> Result<Vec<WorldLaunchOption>, String> {
     let worlds = world_manager::scan_worlds(&server_root, &aliases, "")?;
-    Ok(worlds.into_iter().map(|w| WorldLaunchOption {
+    Ok(worlds.into_iter().filter(|w| !w.is_archived).map(|w| WorldLaunchOption {
         id: w.island_id,
         alias: w.alias,
         world_name: w.world_name,
@@ -206,6 +234,11 @@ pub fn run() {
             restore_world_cmd,
             import_world_cmd,
             list_backups,
+            activate_world_cmd,
+            archive_world_cmd,
+            unarchive_world_cmd,
+            delete_world_cmd,
+            get_world_json,
             get_status,
             start_server,
             stop_server,

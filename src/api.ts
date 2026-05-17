@@ -38,6 +38,16 @@ export const api = {
     invoke<string>("import_world_cmd", { sourcePath, serverRoot }),
   listBackups: (backupRoot: string, worldIdOrAlias: string) =>
     invoke<BackupInfo[]>("list_backups", { backupRoot, worldIdOrAlias }),
+  activateWorld: (serverRoot: string, worldId: string) =>
+    invoke<void>("activate_world_cmd", { serverRoot, worldId }),
+  archiveWorld: (serverRoot: string, worldId: string) =>
+    invoke<void>("archive_world_cmd", { serverRoot, worldId }),
+  unarchiveWorld: (serverRoot: string, worldId: string) =>
+    invoke<void>("unarchive_world_cmd", { serverRoot, worldId }),
+  deleteWorld: (serverRoot: string, worldId: string, archived: boolean) =>
+    invoke<void>("delete_world_cmd", { serverRoot, worldId, archived }),
+  getWorldJson: (serverRoot: string, worldId: string, archived: boolean) =>
+    invoke<string>("get_world_json", { serverRoot, worldId, archived }),
 
   // Server process
   getStatus: () => invoke<ServerState>("get_status"),

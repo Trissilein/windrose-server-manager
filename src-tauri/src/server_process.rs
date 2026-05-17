@@ -61,6 +61,7 @@ impl ServerProcess {
                 state.invite_code = if info.invite_code.is_empty() { None } else { Some(info.invite_code.clone()) };
                 state.password = if info.password.is_empty() { None } else { Some(info.password.clone()) };
                 state.max_players = Some(info.max_player_count);
+                state.world_id = if info.world_id.is_empty() { None } else { Some(info.world_id.clone()) };
             }
         }
         let _ = app.emit("server-status", self.state.lock().await.clone());
@@ -164,6 +165,7 @@ impl ServerProcess {
                 state.players = Vec::new();
                 state.cpu_percent = 0.0;
                 state.memory_mb = 0;
+                state.world_id = None;
                 let _ = app_clone.emit("server-status", state.clone());
             }
             *pid_clone.lock().await = None;
@@ -177,6 +179,11 @@ impl ServerProcess {
             use sysinfo::{Pid, ProcessesToUpdate, System};
             let mut sys = System::new();
             let sysinfo_pid = Pid::from_u32(pid);
+
+            // Determine logical CPU count for normalization (cpu_usage() reports 0–num_cpus*100)
+            let num_cpus = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1) as f32;
 
             // First refresh for CPU baseline, then wait minimum interval
             sys.refresh_processes(ProcessesToUpdate::Some(&[sysinfo_pid]), false);
@@ -193,10 +200,12 @@ impl ServerProcess {
 
                 sys.refresh_processes(ProcessesToUpdate::Some(&[sysinfo_pid]), false);
 
-                let (cpu, mem_mb) = match sys.process(sysinfo_pid) {
+                let (cpu_raw, mem_mb) = match sys.process(sysinfo_pid) {
                     Some(process) => (process.cpu_usage(), process.memory() / 1_048_576),
                     None => break,
                 };
+                // Normalize to 0–100% across all logical cores
+                let cpu = (cpu_raw / num_cpus).clamp(0.0, 100.0);
 
                 {
                     let mut state = metrics_state.lock().await;
