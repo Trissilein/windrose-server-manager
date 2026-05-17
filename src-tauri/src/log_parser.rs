@@ -1,3 +1,4 @@
+use chrono::{TimeZone, Utc, Local};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -26,6 +27,13 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::WorldLoad,
             summary_template: "Welt geladen: {1}",
         },
+        // Real Windrose ready signal
+        LogPattern {
+            regex: Regex::new(r"UR5EcCollector::OnResponse.*New settings received").unwrap(),
+            category: LogCategory::ServerReady,
+            summary_template: "SERVER BEREIT",
+        },
+        // Fallback for other UE5 servers
         LogPattern {
             regex: Regex::new(r"SetIsReadyForHostOwnerConnect.*Host server is ready").unwrap(),
             category: LogCategory::ServerReady,
@@ -71,25 +79,21 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::Shutdown,
             summary_template: "Server faehrt herunter",
         },
-        // Player connect — UE5: "LogNet: Join request: /Game/...?Name=PLAYERNAME&..."
         LogPattern {
             regex: Regex::new(r"LogNet.*Join request.*[?&]Name=([^&\s\]]+)").unwrap(),
             category: LogCategory::PlayerConnect,
             summary_template: "{1}",
         },
-        // Player connect — UE5: "LogGameMode: Login: PLAYERNAME"
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogin:\s+(\S+)").unwrap(),
             category: LogCategory::PlayerConnect,
             summary_template: "{1}",
         },
-        // Player disconnect — UE5: "LogGameMode: Logout: PLAYERNAME"
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogout:\s+(\S+)").unwrap(),
             category: LogCategory::PlayerDisconnect,
             summary_template: "{1}",
         },
-        // Player disconnect — UE5: "LogNet: UNetConnection::Close: ..."
         LogPattern {
             regex: Regex::new(r"LogNet.*UNetConnection::Close.*RemoteAddr=([^,\s]+)").unwrap(),
             category: LogCategory::PlayerDisconnect,
@@ -102,9 +106,20 @@ static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]\[(\s*\d+)\]").unwrap()
 });
 
+// Parse UE5 timestamp (UTC) and convert to local time for display
+fn convert_timestamp(raw_ts: &str) -> String {
+    // UE5 format: 2026.05.17-16.11.17:016
+    // Treat as UTC, convert to local timezone
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(raw_ts, "%Y.%m.%d-%H.%M.%S:%3f") {
+        let utc = Utc.from_utc_datetime(&ndt);
+        return utc.with_timezone(&Local).format("%H:%M:%S").to_string();
+    }
+    raw_ts.to_string()
+}
+
 pub fn parse_line(raw: &str) -> LogEvent {
     let (timestamp, frame, content) = if let Some(caps) = TIMESTAMP_RE.captures(raw) {
-        let ts = caps.get(1).map(|m| m.as_str().to_string());
+        let ts = caps.get(1).map(|m| convert_timestamp(m.as_str()));
         let fr = caps.get(2).and_then(|m| m.as_str().trim().parse::<u32>().ok());
         let rest = &raw[caps.get(0).unwrap().end()..];
         (ts, fr, rest)
@@ -120,8 +135,9 @@ pub fn parse_line(raw: &str) -> LogEvent {
                     summary = summary.replace(&format!("{{{}}}", i), m.as_str());
                 }
             }
+            // For BootNoise with empty template keep it short; others: full content
             if summary.is_empty() {
-                summary = content.chars().take(80).collect();
+                summary = content.chars().take(120).collect();
             }
             return LogEvent {
                 timestamp,
@@ -142,12 +158,19 @@ pub fn parse_line(raw: &str) -> LogEvent {
         (LogLevel::Debug, LogCategory::Unknown)
     };
 
+    // No truncation for Error/Warning — show full content
+    // Unknown gets capped at 200 to avoid giant noise lines
+    let summary = match category {
+        LogCategory::Error | LogCategory::Warning => content.to_string(),
+        _ => content.chars().take(200).collect(),
+    };
+
     LogEvent {
         timestamp,
         frame,
         category,
         level,
-        summary: content.chars().take(120).collect(),
+        summary,
         raw_line: raw.to_string(),
     }
 }

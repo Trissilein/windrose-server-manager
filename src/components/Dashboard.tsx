@@ -176,13 +176,8 @@ export default function Dashboard({ config, onNavigate }: Props) {
         setError("Keine Welt gefunden — bitte zuerst im Welten-Manager eine Welt anlegen.");
         return;
       }
-      if (worlds.length === 1) {
-        // Single world: start directly without dialog
-        await api.startServer(config.server_path, worlds[0].id);
-      } else {
-        // Multiple worlds: show picker
-        setWorldPickerWorlds(worlds);
-      }
+      // Always show picker so user can confirm/select the world
+      setWorldPickerWorlds(worlds);
     } catch (e) {
       setError(`Start fehlgeschlagen: ${String(e)}`);
     }
