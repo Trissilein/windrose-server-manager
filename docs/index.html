@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Windrose Server Manager</title>
+  <meta name="description" content="Grafisches Tool zum Verwalten deines Windrose Dedicated Servers — Server starten/stoppen, Welten sichern, Konfiguration bearbeiten." />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+</head>
+<body>
+
+<nav>
+  <span class="nav-brand">Windrose Server Manager</span>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#requirements">Voraussetzungen</a>
+    <a href="https://github.com/Trissilein/windrose-server-manager/releases/latest">Download</a>
+    <a href="https://github.com/Trissilein/windrose-server-manager">GitHub</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-logo">
+    <!-- SVG-Logo inline für Favicon-Konsistenz -->
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="90" height="90">
+      <circle cx="256" cy="256" r="256" fill="#0f1117"/>
+      <circle cx="256" cy="256" r="220" fill="none" stroke="#3d4466" stroke-width="4"/>
+      <polygon points="256,48 232,230 256,256 280,230" fill="#7b8aff"/>
+      <polygon points="256,464 280,282 256,256 232,282" fill="#5b6af0"/>
+      <polygon points="464,256 282,232 256,256 282,280" fill="#7b8aff"/>
+      <polygon points="48,256 230,280 256,256 230,232" fill="#5b6af0"/>
+      <polygon points="412,100 272,222 256,256 290,240" fill="#9ba8ff" opacity="0.85"/>
+      <polygon points="100,412 240,290 256,256 222,272" fill="#4a58d8" opacity="0.85"/>
+      <polygon points="100,100 240,222 256,256 222,240" fill="#9ba8ff" opacity="0.85"/>
+      <polygon points="412,412 272,290 256,256 290,272" fill="#4a58d8" opacity="0.85"/>
+      <circle cx="256" cy="256" r="18" fill="#ffffff" opacity="0.95"/>
+      <circle cx="256" cy="256" r="10" fill="#0f1117"/>
+    </svg>
+  </div>
+
+  <div class="badge-row">
+    <span class="badge badge-windows">Windows 10/11</span>
+    <span class="badge badge-free">Kostenlos &amp; Open Source</span>
+    <span class="badge badge-rust">Tauri · Rust · React</span>
+  </div>
+
+  <h1>Windrose Server<br/>auf Knopfdruck</h1>
+
+  <p>
+    Kein .bat-Skript, kein Notepad. Starte, stoppe und konfiguriere deinen
+    Windrose Dedicated Server mit einer modernen Desktop-App.
+  </p>
+
+  <div class="hero-actions">
+    <a class="btn-hero btn-download"
+       href="https://github.com/Trissilein/windrose-server-manager/releases/latest">
+      ⬇ Installer herunterladen
+    </a>
+    <a class="btn-hero btn-github"
+       href="https://github.com/Trissilein/windrose-server-manager">
+      GitHub
+    </a>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <h2>Was drin ist</h2>
+  <div class="feature-grid">
+
+    <div class="feature-card">
+      <span class="feature-icon">🖥️</span>
+      <h3>Server-Steuerung</h3>
+      <p>
+        Server starten, stoppen und neu starten per Klick.
+        Uptime-Anzeige, Invite-Code kopieren, Spieler-Zähler —
+        alles auf einen Blick im Dashboard.
+      </p>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">📋</span>
+      <h3>Log-Viewer</h3>
+      <p>
+        UE5-Rohlogs werden in lesbare Ereignisse gefiltert.
+        Boot-Noise ausgeblendet, Key-Events farbig hervorgehoben —
+        mit Raw-Toggle für die volle Ausgabe.
+      </p>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🌍</span>
+      <h3>Welten-Manager</h3>
+      <p>
+        Welten mit eigenem Alias benennen statt Hex-IDs merken.
+        Backups anlegen, Versionen wiederherstellen, Welten
+        importieren — alles mit integrierter Validierung.
+      </p>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">⚙️</span>
+      <h3>Config-Editor</h3>
+      <p>
+        ServerDescription.json und WorldDescription.json
+        komfortabel bearbeiten. Felder gesperrt wenn Server läuft —
+        Datenverlust durch Editieren im Betrieb ausgeschlossen.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+<section class="screenshot-section">
+  <div class="screenshot-placeholder">
+    📸 Screenshots folgen nach erstem Release
+  </div>
+</section>
+
+<section class="requirements" id="requirements">
+  <h2>Voraussetzungen</h2>
+  <ul class="req-list">
+    <li><span class="check">✓</span> Windows 10 oder 11 (64-bit)</li>
+    <li><span class="check">✓</span> Microsoft WebView2 Runtime (auf Win11 vorinstalliert)</li>
+    <li><span class="check">✓</span> Windrose Dedicated Server via Steam (App-ID 4129620)</li>
+    <li><span class="check">✓</span> Steam-Installation im Standard-Pfad (oder manuell konfigurierbar)</li>
+  </ul>
+</section>
+
+<footer>
+  <p>
+    Windrose Server Manager ist ein inoffizielles Community-Tool und nicht mit
+    den Entwicklern von Windrose assoziiert. &nbsp;·&nbsp;
+    <a href="https://github.com/Trissilein/windrose-server-manager">GitHub</a> &nbsp;·&nbsp;
+    <a href="https://github.com/Trissilein/windrose-server-manager/issues">Bug melden</a>
+  </p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="256" fill="#0f1117"/>
+
+  <!-- Outer ring -->
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#3d4466" stroke-width="4"/>
+
+  <!-- Windrose / Compass rose — 8 points -->
+  <!-- N/S main points (tall, sharp) -->
+  <polygon points="256,48 232,230 256,256 280,230" fill="#7b8aff"/>
+  <polygon points="256,464 280,282 256,256 232,282" fill="#5b6af0"/>
+
+  <!-- E/W main points (tall, sharp) -->
+  <polygon points="464,256 282,232 256,256 282,280" fill="#7b8aff"/>
+  <polygon points="48,256 230,280 256,256 230,232" fill="#5b6af0"/>
+
+  <!-- NE/SW diagonal points (shorter) -->
+  <polygon points="412,100 272,222 256,256 290,240" fill="#9ba8ff" opacity="0.85"/>
+  <polygon points="100,412 240,290 256,256 222,272" fill="#4a58d8" opacity="0.85"/>
+
+  <!-- NW/SE diagonal points (shorter) -->
+  <polygon points="100,100 240,222 256,256 222,240" fill="#9ba8ff" opacity="0.85"/>
+  <polygon points="412,412 272,290 256,256 290,272" fill="#4a58d8" opacity="0.85"/>
+
+  <!-- Center dot -->
+  <circle cx="256" cy="256" r="18" fill="#ffffff" opacity="0.95"/>
+  <circle cx="256" cy="256" r="10" fill="#0f1117"/>
+
+  <!-- N label -->
+  <text x="256" y="36" text-anchor="middle" font-family="Segoe UI, system-ui, sans-serif"
+        font-size="28" font-weight="700" fill="#ffffff" opacity="0.9">N</text>
+</svg>

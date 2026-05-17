@@ -99,8 +99,8 @@ impl Default for WindowConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            server_path: r"C:\Program Files (x86)\Steam\steamapps\common\Windrose\R5\Builds\WindowsServer".to_string(),
-            backup_path: r"C:\Program Files (x86)\Steam\steamapps\common\Windrose\R5\Builds\WindowsServer\Backups".to_string(),
+            server_path: String::new(),
+            backup_path: String::new(),
             world_aliases: HashMap::new(),
             window: WindowConfig::default(),
         }
@@ -110,7 +110,7 @@ impl Default for AppConfig {
 // === Server Status ===
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "PascalCase")]
 pub enum ServerStatus {
     Stopped,
     Starting,
@@ -146,7 +146,7 @@ impl Default for ServerState {
 // === Log Events ===
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "PascalCase")]
 pub enum LogCategory {
     BootNoise,
     ServerInfo,
@@ -168,7 +168,7 @@ pub enum LogCategory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "PascalCase")]
 pub enum LogLevel {
     Info,
     Warning,
