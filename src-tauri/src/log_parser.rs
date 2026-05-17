@@ -113,6 +113,19 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             summary_template: "Server fährt herunter",
         },
         // ── Players ───────────────────────────────────────────────────────────
+        // R5 DataKeeper account-status dump — fires on each state transition
+        // Line format: "     1. Name 'PlayerName'. AccountId '...'. State 'ReadyToPlay'. ..."
+        LogPattern {
+            regex: Regex::new(r"Name '([^']+)'.*\bState 'ReadyToPlay'").unwrap(),
+            category: LogCategory::PlayerConnect,
+            summary_template: "Beitritt: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"Name '([^']+)'.*\bState 'SaidFarewell'").unwrap(),
+            category: LogCategory::PlayerDisconnect,
+            summary_template: "Verlassen: {1}",
+        },
+        // Standard UE5 join/logout (fallback for non-R5 servers)
         LogPattern {
             regex: Regex::new(r"LogNet.*Join request.*[?&]Name=([^&\s\]]+)").unwrap(),
             category: LogCategory::PlayerConnect,
