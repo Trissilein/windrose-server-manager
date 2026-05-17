@@ -2,17 +2,18 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
 use crate::log_parser;
-use crate::types::{ServerState, ServerStatus};
+use crate::types::{LogCategory, PlayerInfo, ServerStartInfo, ServerState, ServerStatus};
 
 pub struct ServerProcess {
     pub state: Arc<Mutex<ServerState>>,
     child_pid: Arc<Mutex<Option<u32>>>,
+    child_stdin: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
 }
 
 impl ServerProcess {
@@ -20,6 +21,7 @@ impl ServerProcess {
         Self {
             state: Arc::new(Mutex::new(ServerState::default())),
             child_pid: Arc::new(Mutex::new(None)),
+            child_stdin: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -27,7 +29,12 @@ impl ServerProcess {
         self.state.lock().await.clone()
     }
 
-    pub async fn start(&self, server_root: &str, app: AppHandle) -> Result<(), String> {
+    pub async fn start(
+        &self,
+        server_root: &str,
+        server_info: Option<ServerStartInfo>,
+        app: AppHandle,
+    ) -> Result<(), String> {
         {
             let state = self.state.lock().await;
             if state.status != ServerStatus::Stopped {
@@ -49,6 +56,12 @@ impl ServerProcess {
             let mut state = self.state.lock().await;
             state.status = ServerStatus::Starting;
             state.started_at = Some(chrono::Local::now().to_rfc3339());
+            if let Some(ref info) = server_info {
+                state.server_name = Some(info.server_name.clone());
+                state.invite_code = if info.invite_code.is_empty() { None } else { Some(info.invite_code.clone()) };
+                state.password = if info.password.is_empty() { None } else { Some(info.password.clone()) };
+                state.max_players = Some(info.max_player_count);
+            }
         }
         let _ = app.emit("server-status", self.state.lock().await.clone());
 
@@ -57,8 +70,8 @@ impl ServerProcess {
         cmd.current_dir(server_root);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::piped());
 
-        // Windows: CREATE_NEW_PROCESS_GROUP + ABOVE_NORMAL_PRIORITY_CLASS
         #[cfg(target_os = "windows")]
         {
             #[allow(unused_imports)]
@@ -69,21 +82,18 @@ impl ServerProcess {
         let mut child = cmd.spawn().map_err(|e| format!("Server konnte nicht gestartet werden: {e}"))?;
         let pid = child.id().unwrap_or(0);
 
+        *self.child_stdin.lock().await = child.stdin.take();
         {
-            let mut stored_pid = self.child_pid.lock().await;
-            *stored_pid = Some(pid);
-        }
-        {
-            let mut state = self.state.lock().await;
-            state.pid = Some(pid);
+            *self.child_pid.lock().await = Some(pid);
+            self.state.lock().await.pid = Some(pid);
         }
 
         let stdout = child.stdout.take().unwrap();
         let state_clone = self.state.clone();
         let pid_clone = self.child_pid.clone();
+        let stdin_clone = self.child_stdin.clone();
         let app_clone = app.clone();
 
-        // Spawn stdout reader task
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -91,46 +101,108 @@ impl ServerProcess {
             while let Ok(Some(line)) = lines.next_line().await {
                 let event = log_parser::parse_line(&line);
 
-                // Update state from key log events
                 {
                     let mut state = state_clone.lock().await;
                     match event.category {
-                        crate::types::LogCategory::ServerReady => {
+                        LogCategory::ServerReady => {
                             state.status = ServerStatus::Running;
                         }
-                        crate::types::LogCategory::ConnectionInfo => {
-                            // Extract invite code from summary like "Invite Code: 890b6ba5"
+                        LogCategory::ConnectionInfo => {
                             if let Some(code) = event.summary.strip_prefix("Invite Code: ") {
                                 state.invite_code = Some(code.to_string());
                             }
                         }
-                        crate::types::LogCategory::ServerInfo => {
+                        LogCategory::ServerInfo => {
                             if let Some(ver) = event.summary.strip_prefix("Server Version: ") {
                                 state.version = Some(ver.trim().to_string());
                             }
                         }
-                        crate::types::LogCategory::Shutdown => {
+                        LogCategory::Shutdown => {
                             state.status = ServerStatus::Stopping;
+                        }
+                        LogCategory::PlayerConnect => {
+                            let name = event.summary.trim().to_string();
+                            if !name.is_empty() {
+                                if !state.players.iter().any(|p| p.name == name) {
+                                    state.players.push(PlayerInfo {
+                                        name,
+                                        joined_at: chrono::Local::now().to_rfc3339(),
+                                    });
+                                    state.player_count = Some(state.players.len() as u32);
+                                }
+                            }
+                        }
+                        LogCategory::PlayerDisconnect => {
+                            let name = event.summary.trim().to_string();
+                            if !name.is_empty() {
+                                state.players.retain(|p| p.name != name);
+                                state.player_count = Some(state.players.len() as u32);
+                            }
                         }
                         _ => {}
                     }
                     let _ = app_clone.emit("server-status", state.clone());
                 }
-
                 let _ = app_clone.emit("log-event", &event);
             }
 
-            // Process exited
-            let mut state = state_clone.lock().await;
-            state.status = ServerStatus::Stopped;
-            state.pid = None;
-            state.invite_code = None;
-            state.player_count = None;
+            {
+                let mut state = state_clone.lock().await;
+                state.status = ServerStatus::Stopped;
+                state.pid = None;
+                state.invite_code = None;
+                state.player_count = None;
+                state.players = Vec::new();
+                state.cpu_percent = 0.0;
+                state.memory_mb = 0;
+                let _ = app_clone.emit("server-status", state.clone());
+            }
             *pid_clone.lock().await = None;
-            let _ = app_clone.emit("server-status", state.clone());
+            *stdin_clone.lock().await = None;
         });
 
-        // Wait for child in separate task
+        // CPU/RAM metrics polling task
+        let metrics_state = self.state.clone();
+        let metrics_app = app.clone();
+        tokio::spawn(async move {
+            use sysinfo::{Pid, ProcessesToUpdate, System};
+            let mut sys = System::new();
+            let sysinfo_pid = Pid::from_u32(pid);
+
+            // First refresh for CPU baseline, then wait minimum interval
+            sys.refresh_processes(ProcessesToUpdate::Some(&[sysinfo_pid]), false);
+            tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
+
+            loop {
+                {
+                    let state = metrics_state.lock().await;
+                    match state.status {
+                        ServerStatus::Stopped | ServerStatus::Stopping => break,
+                        _ => {}
+                    }
+                }
+
+                sys.refresh_processes(ProcessesToUpdate::Some(&[sysinfo_pid]), false);
+
+                let (cpu, mem_mb) = match sys.process(sysinfo_pid) {
+                    Some(process) => (process.cpu_usage(), process.memory() / 1_048_576),
+                    None => break,
+                };
+
+                {
+                    let mut state = metrics_state.lock().await;
+                    if state.status == ServerStatus::Stopped {
+                        break;
+                    }
+                    state.cpu_percent = cpu;
+                    state.memory_mb = mem_mb;
+                    let _ = metrics_app.emit("server-status", state.clone());
+                }
+
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+
         tokio::spawn(async move {
             let _ = child.wait().await;
         });
@@ -153,23 +225,20 @@ impl ServerProcess {
             let _ = app.emit("server-status", state.clone());
         }
 
-        // Graceful shutdown via CTRL_BREAK_EVENT
         #[cfg(target_os = "windows")]
         {
             use windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent;
             unsafe {
-                GenerateConsoleCtrlEvent(1, pid); // CTRL_BREAK_EVENT = 1
+                GenerateConsoleCtrlEvent(1, pid);
             }
         }
 
-        // Wait up to 30 seconds for graceful exit
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             if self.child_pid.lock().await.is_none() {
                 break;
             }
             if Instant::now() > deadline {
-                // Force kill
                 #[cfg(target_os = "windows")]
                 {
                     use windows_sys::Win32::Foundation::CloseHandle;
@@ -188,5 +257,20 @@ impl ServerProcess {
         }
 
         Ok(())
+    }
+
+    pub async fn kick_player(&self, name: &str) -> Result<(), String> {
+        let mut stdin_guard = self.child_stdin.lock().await;
+        match stdin_guard.as_mut() {
+            Some(stdin) => {
+                let cmd_str = format!("kick {}\n", name);
+                stdin.write_all(cmd_str.as_bytes()).await
+                    .map_err(|e| format!("Stdin-Schreiben fehlgeschlagen: {e}"))?;
+                stdin.flush().await
+                    .map_err(|e| format!("Stdin-Flush fehlgeschlagen: {e}"))?;
+                Ok(())
+            }
+            None => Err("Server läuft nicht oder Stdin nicht verfügbar".to_string()),
+        }
     }
 }

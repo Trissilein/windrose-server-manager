@@ -6,6 +6,7 @@ import type {
   ServerState,
   WorldDescriptionFile,
   WorldInfo,
+  WorldLaunchOption,
 } from "./types";
 
 export const api = {
@@ -40,6 +41,10 @@ export const api = {
 
   // Server process
   getStatus: () => invoke<ServerState>("get_status"),
-  startServer: (serverRoot: string) => invoke<void>("start_server", { serverRoot }),
+  startServer: (serverRoot: string, worldId?: string) =>
+    invoke<void>("start_server", { serverRoot, worldId: worldId ?? null }),
   stopServer: () => invoke<void>("stop_server"),
+  kickPlayer: (name: string) => invoke<void>("kick_player", { name }),
+  getWorldsForLaunch: (serverRoot: string, aliases: Record<string, string>) =>
+    invoke<WorldLaunchOption[]>("get_worlds_for_launch", { serverRoot, aliases }),
 };

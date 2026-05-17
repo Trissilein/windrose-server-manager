@@ -71,6 +71,30 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::Shutdown,
             summary_template: "Server faehrt herunter",
         },
+        // Player connect — UE5: "LogNet: Join request: /Game/...?Name=PLAYERNAME&..."
+        LogPattern {
+            regex: Regex::new(r"LogNet.*Join request.*[?&]Name=([^&\s\]]+)").unwrap(),
+            category: LogCategory::PlayerConnect,
+            summary_template: "{1}",
+        },
+        // Player connect — UE5: "LogGameMode: Login: PLAYERNAME"
+        LogPattern {
+            regex: Regex::new(r"LogGameMode.*\bLogin:\s+(\S+)").unwrap(),
+            category: LogCategory::PlayerConnect,
+            summary_template: "{1}",
+        },
+        // Player disconnect — UE5: "LogGameMode: Logout: PLAYERNAME"
+        LogPattern {
+            regex: Regex::new(r"LogGameMode.*\bLogout:\s+(\S+)").unwrap(),
+            category: LogCategory::PlayerDisconnect,
+            summary_template: "{1}",
+        },
+        // Player disconnect — UE5: "LogNet: UNetConnection::Close: ..."
+        LogPattern {
+            regex: Regex::new(r"LogNet.*UNetConnection::Close.*RemoteAddr=([^,\s]+)").unwrap(),
+            category: LogCategory::PlayerDisconnect,
+            summary_template: "{1}",
+        },
     ]
 });
 

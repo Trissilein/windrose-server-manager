@@ -3,6 +3,18 @@
 
 export type ServerStatus = "Stopped" | "Starting" | "Running" | "Stopping";
 
+export interface PlayerInfo {
+  name: string;
+  joined_at: string;
+}
+
+export interface WorldLaunchOption {
+  id: string;
+  alias: string | null;
+  world_name: string;
+  creation_time: number;
+}
+
 export interface ServerState {
   status: ServerStatus;
   pid: number | null;
@@ -11,6 +23,11 @@ export interface ServerState {
   version: string | null;
   player_count: number | null;
   max_players: number | null;
+  players: PlayerInfo[];
+  cpu_percent: number;
+  memory_mb: number;
+  server_name: string | null;
+  password: string | null;
 }
 
 export type LogCategory =

@@ -119,6 +119,29 @@ pub enum ServerStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerInfo {
+    pub name: String,
+    pub joined_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldLaunchOption {
+    pub id: String,
+    pub alias: Option<String>,
+    pub world_name: String,
+    pub creation_time: f64,
+}
+
+// Passed from lib.rs to server_process::start() — config snapshot at launch time
+#[derive(Debug, Clone)]
+pub struct ServerStartInfo {
+    pub server_name: String,
+    pub invite_code: String,
+    pub password: String,
+    pub max_player_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerState {
     pub status: ServerStatus,
     pub pid: Option<u32>,
@@ -127,6 +150,11 @@ pub struct ServerState {
     pub version: Option<String>,
     pub player_count: Option<u32>,
     pub max_players: Option<u32>,
+    pub players: Vec<PlayerInfo>,
+    pub cpu_percent: f32,
+    pub memory_mb: u64,
+    pub server_name: Option<String>,
+    pub password: Option<String>,
 }
 
 impl Default for ServerState {
@@ -139,6 +167,11 @@ impl Default for ServerState {
             version: None,
             player_count: None,
             max_players: None,
+            players: Vec::new(),
+            cpu_percent: 0.0,
+            memory_mb: 0,
+            server_name: None,
+            password: None,
         }
     }
 }

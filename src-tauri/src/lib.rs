@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use server_process::ServerProcess;
-use types::{AppConfig, BackupInfo, WorldInfo};
+use types::{AppConfig, BackupInfo, ServerStartInfo, WorldInfo, WorldLaunchOption};
 
 // ── App-Config ────────────────────────────────────────────────────────────────
 
@@ -120,10 +120,30 @@ async fn get_status(state: tauri::State<'_, Arc<Mutex<ServerProcess>>>) -> Resul
 #[tauri::command]
 async fn start_server(
     server_root: String,
+    world_id: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<ServerProcess>>>,
 ) -> Result<(), String> {
-    state.lock().await.start(&server_root, app).await
+    // If a specific world was selected, write it to the server config first
+    if let Some(ref wid) = world_id {
+        if let Ok(mut cfg) = config_manager::read_server_description(&server_root) {
+            cfg.server_description_persistent.world_island_id = wid.clone();
+            let _ = config_manager::write_server_description(&server_root, &cfg);
+        }
+    }
+
+    // Load current server config to populate dashboard info at launch
+    let server_info = config_manager::read_server_description(&server_root).ok().map(|cfg| {
+        let p = &cfg.server_description_persistent;
+        ServerStartInfo {
+            server_name: p.server_name.clone(),
+            invite_code: p.invite_code.clone(),
+            password: p.password.clone(),
+            max_player_count: p.max_player_count,
+        }
+    });
+
+    state.lock().await.start(&server_root, server_info, app).await
 }
 
 #[tauri::command]
@@ -132,6 +152,28 @@ async fn stop_server(
     state: tauri::State<'_, Arc<Mutex<ServerProcess>>>,
 ) -> Result<(), String> {
     state.lock().await.stop(app).await
+}
+
+#[tauri::command]
+async fn kick_player(
+    name: String,
+    state: tauri::State<'_, Arc<Mutex<ServerProcess>>>,
+) -> Result<(), String> {
+    state.lock().await.kick_player(&name).await
+}
+
+#[tauri::command]
+fn get_worlds_for_launch(
+    server_root: String,
+    aliases: std::collections::HashMap<String, String>,
+) -> Result<Vec<WorldLaunchOption>, String> {
+    let worlds = world_manager::scan_worlds(&server_root, &aliases, "")?;
+    Ok(worlds.into_iter().map(|w| WorldLaunchOption {
+        id: w.island_id,
+        alias: w.alias,
+        world_name: w.world_name,
+        creation_time: w.creation_time,
+    }).collect())
 }
 
 // ── Entry Point ───────────────────────────────────────────────────────────────
@@ -167,6 +209,8 @@ pub fn run() {
             get_status,
             start_server,
             stop_server,
+            kick_player,
+            get_worlds_for_launch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

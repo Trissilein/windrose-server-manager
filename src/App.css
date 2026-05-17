@@ -171,7 +171,59 @@ html, body, #root {
 .status-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .status-label { font-size: 18px; font-weight: 600; }
 .status-version { font-size: 12px; color: var(--muted); }
-.status-actions { display: flex; gap: 8px; }
+.status-uptime { font-size: 12px; color: var(--green); font-family: var(--mono); }
+.status-actions { display: flex; gap: 8px; align-items: center; }
+
+/* ── Dashboard 3-panel layout ────────────────────────────────────── */
+.dash-panels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+@media (max-width: 820px) {
+  .dash-panels { grid-template-columns: 1fr; }
+}
+.dash-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.dash-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(46, 50, 80, 0.5);
+  gap: 8px;
+  min-height: 28px;
+}
+.info-row:last-child { border-bottom: none; }
+.info-row .info-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; }
+.info-row .info-val { font-size: 13px; font-weight: 600; text-align: right; word-break: break-all; }
+
+/* soft danger button for kick */
+.btn-danger-soft {
+  background: rgba(224, 82, 82, 0.12);
+  border: 1px solid rgba(224, 82, 82, 0.3);
+  color: var(--red);
+}
+.btn-danger-soft:hover:not(:disabled) {
+  background: rgba(224, 82, 82, 0.22);
+  border-color: var(--red);
+}
 
 .info-grid {
   display: grid;
