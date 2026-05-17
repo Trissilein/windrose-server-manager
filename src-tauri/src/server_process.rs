@@ -90,6 +90,17 @@ impl ServerProcess {
         }
 
         let stdout = child.stdout.take().unwrap();
+
+        // Drain stderr continuously — if nobody reads the pipe the 64 KB buffer fills up
+        // and the server blocks on its stderr write, preventing LAN subsystem init.
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                let reader = BufReader::new(stderr);
+                let mut lines = reader.lines();
+                while let Ok(Some(_)) = lines.next_line().await {}
+            });
+        }
+
         let state_clone = self.state.clone();
         let pid_clone = self.child_pid.clone();
         let stdin_clone = self.child_stdin.clone();
