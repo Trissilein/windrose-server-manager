@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import type { AppConfig, BackupInfo, ServerState, WorldInfo } from "../types";
 
@@ -199,12 +199,32 @@ export default function WorldManager({ config, onAliasChange }: Props) {
   }
 
   async function handleImport() {
-    const selected = await open({ directory: true, multiple: false, title: "Welt-Ordner auswählen" });
+    const selected = await open({
+      multiple: false,
+      title: "Welt-ZIP auswählen",
+      filters: [{ name: "Windrose Welt-Export", extensions: ["zip"] }],
+    });
     if (!selected || typeof selected !== "string") return;
     try {
-      const id = await api.importWorld(selected, config.server_path);
+      const id = await api.importWorldZip(selected, config.server_path);
       flash(`Welt importiert: ${id}`);
       await load();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleExport(world: WorldInfo) {
+    const defaultName = `${world.alias ?? world.island_id.slice(0, 12)}_${new Date().toISOString().slice(0, 10)}.zip`;
+    const dest = await save({
+      title: "Welt exportieren",
+      defaultPath: defaultName,
+      filters: [{ name: "ZIP-Archiv", extensions: ["zip"] }],
+    });
+    if (!dest) return;
+    try {
+      await api.exportWorldZip(config.server_path, world.island_id, world.is_archived, dest);
+      flash(`Exportiert: ${dest}`);
     } catch (e) {
       setError(String(e));
     }
@@ -237,7 +257,7 @@ export default function WorldManager({ config, onAliasChange }: Props) {
     <div className="world-manager">
       <div className="wm-toolbar">
         <button className="btn btn-primary" onClick={handleImport} disabled={serverRunning}>
-          Welt importieren…
+          Welt importieren (ZIP)…
         </button>
         <button className="btn btn-small" onClick={load}>Aktualisieren</button>
         {serverRunning && <span className="warning-text">Server läuft — manche Operationen gesperrt</span>}
@@ -328,6 +348,13 @@ export default function WorldManager({ config, onAliasChange }: Props) {
                   </button>
                   <button
                     className="btn btn-small"
+                    onClick={() => handleExport(w)}
+                    title="Welt als ZIP exportieren"
+                  >
+                    Exportieren
+                  </button>
+                  <button
+                    className="btn btn-small"
                     onClick={() => handleArchive(w)}
                     disabled={serverRunning || w.is_active}
                     title={w.is_active ? "Aktive Welt kann nicht archiviert werden" : "Archivieren"}
@@ -395,6 +422,13 @@ export default function WorldManager({ config, onAliasChange }: Props) {
                         title="WorldDescription.json anzeigen"
                       >
                         JSON
+                      </button>
+                      <button
+                        className="btn btn-small"
+                        onClick={() => handleExport(w)}
+                        title="Welt als ZIP exportieren"
+                      >
+                        Exportieren
                       </button>
                       <button
                         className="btn btn-small btn-danger-soft"

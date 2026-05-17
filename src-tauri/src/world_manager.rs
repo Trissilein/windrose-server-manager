@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use crate::config_manager;
 use crate::types::WorldInfo;
@@ -160,6 +161,125 @@ pub fn get_world_json(server_root: &str, world_id: &str, archived: bool) -> Resu
     let json_path = world_path.join("WorldDescription.json");
     std::fs::read_to_string(&json_path)
         .map_err(|e| format!("Kann WorldDescription.json nicht lesen: {e}"))
+}
+
+/// Pack a world folder (active or archived) into a ZIP file at dest_path.
+pub fn export_world_zip(server_root: &str, world_id: &str, archived: bool, dest_path: &str) -> Result<(), String> {
+    let worlds = config_manager::worlds_dir(server_root);
+    let world_path = if archived {
+        worlds.join("_archived").join(world_id)
+    } else {
+        worlds.join(world_id)
+    };
+    if !world_path.exists() {
+        return Err(format!("Welt-Ordner nicht gefunden: {}", world_path.display()));
+    }
+    let dest_file = std::fs::File::create(dest_path)
+        .map_err(|e| format!("Kann ZIP nicht erstellen: {e}"))?;
+    let mut zip = zip::write::ZipWriter::new(dest_file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    zip_add_dir(&mut zip, &world_path, &world_path, options)?;
+    zip.finish().map_err(|e| format!("ZIP finalisieren: {e}"))?;
+    Ok(())
+}
+
+type ZWriter = zip::write::ZipWriter<std::fs::File>;
+
+fn zip_add_dir(zip: &mut ZWriter, base: &Path, current: &Path, options: zip::write::SimpleFileOptions) -> Result<(), String> {
+    for entry in std::fs::read_dir(current).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        let rel = path.strip_prefix(base).unwrap();
+        let name: String = rel.components()
+            .map(|c| c.as_os_str().to_str().unwrap_or("_"))
+            .collect::<Vec<_>>()
+            .join("/");
+        if path.is_dir() {
+            zip.add_directory(format!("{name}/"), options).map_err(|e| e.to_string())?;
+            zip_add_dir(zip, base, &path, options)?;
+        } else {
+            zip.start_file(&name, options).map_err(|e| format!("ZIP Datei {name}: {e}"))?;
+            let data = std::fs::read(&path).map_err(|e| format!("Lesen {}: {e}", path.display()))?;
+            zip.write_all(&data).map_err(|e| format!("ZIP schreiben: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Extract a ZIP, smart-update WorldDescription.json, and place world in worlds_dir.
+/// Returns the islandId of the imported world.
+pub fn import_world_zip(zip_path: &str, server_root: &str) -> Result<String, String> {
+    let file = std::fs::File::open(zip_path)
+        .map_err(|e| format!("Kann ZIP nicht öffnen: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Ungültiges ZIP: {e}"))?;
+
+    let temp_dir = std::env::temp_dir()
+        .join(format!("windrose_imp_{}", chrono::Local::now().timestamp_millis()));
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Temp-Ordner: {e}"))?;
+
+    let result = import_world_zip_inner(&mut archive, &temp_dir, server_root);
+
+    // Always clean up temp dir
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    result
+}
+
+fn import_world_zip_inner(archive: &mut zip::ZipArchive<std::fs::File>, temp_dir: &Path, server_root: &str) -> Result<String, String> {
+    // Extract everything
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| format!("ZIP Eintrag {i}: {e}"))?;
+        let out_path = match entry.enclosed_name() {
+            Some(p) => temp_dir.join(p),
+            None => continue,
+        };
+        if entry.name().ends_with('/') {
+            std::fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mut out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Find WorldDescription.json — at root or inside one subdir (zip root-folder variant)
+    let world_root = if temp_dir.join("WorldDescription.json").exists() {
+        temp_dir.to_path_buf()
+    } else {
+        let sub = std::fs::read_dir(temp_dir).ok()
+            .and_then(|mut e| e.find_map(|e| {
+                let p = e.ok()?.path();
+                if p.is_dir() && p.join("WorldDescription.json").exists() { Some(p) } else { None }
+            }));
+        sub.ok_or_else(|| "WorldDescription.json nicht im ZIP gefunden".to_string())?
+    };
+
+    // Read world descriptor
+    let mut desc = config_manager::read_world_description(&world_root)?;
+    let island_id = desc.world_description.island_id.clone();
+
+    if island_id.is_empty() || island_id.len() != 32 {
+        return Err(format!("Ungültige islandId im ZIP: '{island_id}'"));
+    }
+
+    // Smart edit: write islandId back to guarantee JSON ↔ folder-name consistency
+    desc.world_description.island_id = island_id.clone();
+    config_manager::write_world_description(&world_root, &desc)?;
+
+    let dest = config_manager::worlds_dir(server_root).join(&island_id);
+    if dest.exists() {
+        return Err(format!("Welt '{island_id}' existiert bereits. Zuerst löschen oder archivieren."));
+    }
+
+    // rename is fast (same FS), fall back to copy+delete across drives
+    if std::fs::rename(&world_root, &dest).is_err() {
+        std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        copy_dir_recursive(&world_root, &dest)?;
+    }
+    Ok(island_id)
 }
 
 pub fn backup_world(server_root: &str, world_id: &str, backup_root: &str, alias: Option<&str>) -> Result<String, String> {

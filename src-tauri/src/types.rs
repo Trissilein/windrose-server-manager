@@ -200,6 +200,7 @@ pub enum LogCategory {
     PlayerDisconnect,
     Error,
     Warning,
+    Performance,
     Unknown,
 }
 

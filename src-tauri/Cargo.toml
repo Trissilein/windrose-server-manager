@@ -33,4 +33,5 @@ dirs = "6"
 windows-sys = { version = "0.59", features = ["Win32_System_Threading", "Win32_System_Console", "Win32_Foundation"] }
 winreg = { version = "0.55", optional = false }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 

@@ -48,6 +48,10 @@ export const api = {
     invoke<void>("delete_world_cmd", { serverRoot, worldId, archived }),
   getWorldJson: (serverRoot: string, worldId: string, archived: boolean) =>
     invoke<string>("get_world_json", { serverRoot, worldId, archived }),
+  exportWorldZip: (serverRoot: string, worldId: string, archived: boolean, destPath: string) =>
+    invoke<void>("export_world_zip_cmd", { serverRoot, worldId, archived, destPath }),
+  importWorldZip: (zipPath: string, serverRoot: string) =>
+    invoke<string>("import_world_zip_cmd", { zipPath, serverRoot }),
 
   // Server process
   getStatus: () => invoke<ServerState>("get_status"),

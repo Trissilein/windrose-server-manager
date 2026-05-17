@@ -191,6 +191,16 @@ fn get_world_json(server_root: String, world_id: String, archived: bool) -> Resu
 }
 
 #[tauri::command]
+fn export_world_zip_cmd(server_root: String, world_id: String, archived: bool, dest_path: String) -> Result<(), String> {
+    world_manager::export_world_zip(&server_root, &world_id, archived, &dest_path)
+}
+
+#[tauri::command]
+fn import_world_zip_cmd(zip_path: String, server_root: String) -> Result<String, String> {
+    world_manager::import_world_zip(&zip_path, &server_root)
+}
+
+#[tauri::command]
 fn get_worlds_for_launch(
     server_root: String,
     aliases: std::collections::HashMap<String, String>,
@@ -239,6 +249,8 @@ pub fn run() {
             unarchive_world_cmd,
             delete_world_cmd,
             get_world_json,
+            export_world_zip_cmd,
+            import_world_zip_cmd,
             get_status,
             start_server,
             stop_server,

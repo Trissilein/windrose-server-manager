@@ -48,6 +48,7 @@ export type LogCategory =
   | "PlayerDisconnect"
   | "Error"
   | "Warning"
+  | "Performance"
   | "Unknown";
 
 export type LogLevel = "Info" | "Warning" | "Error" | "Verbose" | "Debug";

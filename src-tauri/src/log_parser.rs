@@ -133,6 +133,27 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::PlayerDisconnect,
             summary_template: "Verbindung getrennt: {1}",
         },
+        // ── Performance ───────────────────────────────────────────────────────────
+        LogPattern {
+            regex: Regex::new(r"^LogPerformance:").unwrap(),
+            category: LogCategory::Performance,
+            summary_template: "",
+        },
+        LogPattern {
+            regex: Regex::new(r"^LogEngine: Warning: Hitch detected").unwrap(),
+            category: LogCategory::Performance,
+            summary_template: "",
+        },
+        LogPattern {
+            regex: Regex::new(r"^LogMemory: Warning:").unwrap(),
+            category: LogCategory::Performance,
+            summary_template: "",
+        },
+        LogPattern {
+            regex: Regex::new(r"^R5Log\w+:.*took \d+").unwrap(),
+            category: LogCategory::Performance,
+            summary_template: "",
+        },
     ]
 });
 
@@ -193,8 +214,8 @@ pub fn parse_line(raw: &str) -> LogEvent {
     };
 
     let summary = match category {
-        // Error/Warning: full content, inline frames stripped for readability
-        LogCategory::Error | LogCategory::Warning => strip_inline_frames(content),
+        // Error/Warning/Performance: full content, inline frames stripped
+        LogCategory::Error | LogCategory::Warning | LogCategory::Performance => strip_inline_frames(content),
         // Unknown: strip frames + cap at 200 chars to avoid noise walls
         _ => strip_inline_frames(content).chars().take(200).collect(),
     };
