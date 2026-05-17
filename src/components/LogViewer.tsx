@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import type { LogCategory, LogEvent } from "../types";
 
 const CATEGORY_LABELS: Record<LogCategory, string> = {
@@ -28,21 +27,17 @@ const ALL_CATEGORIES: LogCategory[] = [
   "Shutdown", "PlayerConnect", "PlayerDisconnect", "Error", "Warning", "Unknown",
 ];
 
-export default function LogViewer() {
-  const [events, setEvents] = useState<LogEvent[]>([]);
+interface Props {
+  events: LogEvent[];
+}
+
+export default function LogViewer({ events }: Props) {
   const [showRaw, setShowRaw] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [hiddenCats, setHiddenCats] = useState<Set<LogCategory>>(
     new Set(["BootNoise", "Unknown"] as LogCategory[])
   );
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const unlisten = listen<LogEvent>("log-event", (e) => {
-      setEvents((prev) => [...prev, e.payload].slice(-2000));
-    });
-    return () => { unlisten.then((f) => f()); };
-  }, []);
 
   useEffect(() => {
     if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -74,6 +69,7 @@ export default function LogViewer() {
           ))}
         </div>
         <div className="log-controls">
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>{events.length} Zeilen</span>
           <label className="toggle-label">
             <input type="checkbox" checked={showRaw} onChange={(e) => setShowRaw(e.target.checked)} />
             Raw
@@ -82,15 +78,14 @@ export default function LogViewer() {
             <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
             Auto-Scroll
           </label>
-          <button className="btn btn-small" onClick={() => setEvents([])}>
-            Leeren
-          </button>
         </div>
       </div>
 
       <div className="log-output">
         {visible.length === 0 && (
-          <div className="empty-hint">Warte auf Server-Logs…</div>
+          <div className="empty-hint">
+            {events.length === 0 ? "Warte auf Server-Logs…" : "Alle Kategorien gefiltert"}
+          </div>
         )}
         {visible.map((ev, i) => (
           <div key={i} className={`log-line log-${ev.level.toLowerCase()}`}>

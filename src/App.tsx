@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
-import type { AppConfig } from "./types";
+import type { AppConfig, LogEvent } from "./types";
 import Dashboard from "./components/Dashboard";
 import LogViewer from "./components/LogViewer";
 import ServerConfig from "./components/ServerConfig";
@@ -28,9 +29,18 @@ const DEFAULT_CONFIG: AppConfig = {
 export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
+  const [logEvents, setLogEvents] = useState<LogEvent[]>([]);
 
   useEffect(() => {
     api.loadAppConfig().then(setConfig).catch(console.error);
+  }, []);
+
+  // Global log-event buffer — persists across tab switches (max 500 entries)
+  useEffect(() => {
+    const unlisten = listen<LogEvent>("log-event", (e) => {
+      setLogEvents((prev) => [...prev, e.payload].slice(-500));
+    });
+    return () => { unlisten.then((f) => f()); };
   }, []);
 
   function handleConfigChange(next: AppConfig) {
@@ -70,7 +80,7 @@ export default function App() {
 
       <main className="main-content">
         {tab === "dashboard" && <Dashboard config={config} onNavigate={(t) => setTab(t as Tab)} />}
-        {tab === "log" && <LogViewer />}
+        {tab === "log" && <LogViewer events={logEvents} />}
         {tab === "server-config" && <ServerConfig config={config} />}
         {tab === "worlds" && (
           <WorldManager config={config} onAliasChange={handleAliasChange} />

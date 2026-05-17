@@ -207,6 +207,19 @@ impl ServerProcess {
             let _ = child.wait().await;
         });
 
+        // Fallback: if process is still alive after 90s but status is still "Starting",
+        // the ServerReady pattern didn't match — assume running anyway
+        let fallback_state = self.state.clone();
+        let fallback_app = app.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(90)).await;
+            let mut state = fallback_state.lock().await;
+            if state.status == ServerStatus::Starting {
+                state.status = ServerStatus::Running;
+                let _ = fallback_app.emit("server-status", state.clone());
+            }
+        });
+
         Ok(())
     }
 
