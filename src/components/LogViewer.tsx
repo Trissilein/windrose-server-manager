@@ -47,12 +47,19 @@ const DEFAULT_HIDDEN: Set<LogCategory> = new Set(["BootNoise", "Unknown"]);
 // e.g. "R5LogNet: Warning: Something" → "Something"
 const LOG_PREFIX_RE = /^[A-Za-z0-9_]+:\s*(?:Warning:|Log:|Error:|Display:)?\s*/;
 
+// Replace runs of 4+ spaces with a line break — UE5 uses spaces for column alignment,
+// which makes lines very wide. In RAW mode the original is preserved.
+function collapseSpaces(s: string): string {
+  return s.replace(/ {4,}/g, "\n");
+}
+
 function renderSummary(ev: LogEvent, showRaw: boolean): string {
   if (showRaw) return ev.raw_line;
+  let text = ev.summary;
   if (ev.category === "Unknown" || ev.category === "BootNoise") {
-    return ev.summary.replace(LOG_PREFIX_RE, "").trim() || ev.summary;
+    text = text.replace(LOG_PREFIX_RE, "").trim() || text;
   }
-  return ev.summary;
+  return collapseSpaces(text);
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────────
