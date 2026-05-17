@@ -79,15 +79,22 @@ export default function App() {
       </nav>
 
       <main className="main-content">
-        {tab === "dashboard" && <Dashboard config={config} onNavigate={(t) => setTab(t as Tab)} />}
-        {tab === "log" && <LogViewer events={logEvents} />}
-        {tab === "server-config" && <ServerConfig config={config} />}
-        {tab === "worlds" && (
+        {/* All tabs stay mounted — CSS visibility preserves state across tab switches */}
+        <div style={{ display: tab === "dashboard" ? "block" : "none", height: "100%" }}>
+          <Dashboard config={config} onNavigate={(t) => setTab(t as Tab)} />
+        </div>
+        <div style={{ display: tab === "log" ? "block" : "none", height: "100%" }}>
+          <LogViewer events={logEvents} />
+        </div>
+        <div style={{ display: tab === "server-config" ? "block" : "none", height: "100%" }}>
+          <ServerConfig config={config} />
+        </div>
+        <div style={{ display: tab === "worlds" ? "block" : "none", height: "100%" }}>
           <WorldManager config={config} onAliasChange={handleAliasChange} />
-        )}
-        {tab === "settings" && (
+        </div>
+        <div style={{ display: tab === "settings" ? "block" : "none", height: "100%" }}>
           <Settings config={config} onChange={handleConfigChange} />
-        )}
+        </div>
       </main>
     </div>
   );
