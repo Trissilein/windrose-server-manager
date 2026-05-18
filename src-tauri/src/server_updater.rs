@@ -76,11 +76,14 @@ pub async fn run_update(steamcmd_path: &str, server_root: &str, app: &AppHandle)
         .map_err(|e| format!("SteamCMD-Fehler beim Warten: {e}"))?;
     let _ = stdout_task.await;
 
-    if status.success() {
+    // Exit code 7 = SteamCMD updated itself and relaunched — the actual app_update
+    // ran in the re-launched process. Treat as success.
+    let exit_code = status.code();
+    if status.success() || exit_code == Some(7) {
         emit("✓ Update abgeschlossen.");
         Ok(())
     } else {
-        let msg = format!("SteamCMD beendet mit Exit-Code {:?}", status.code());
+        let msg = format!("SteamCMD beendet mit Exit-Code {:?}", exit_code);
         emit(&msg);
         Err(msg)
     }
