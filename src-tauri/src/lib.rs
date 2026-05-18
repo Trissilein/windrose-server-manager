@@ -9,11 +9,28 @@ mod world_manager;
 
 pub mod types;
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tauri::{AppHandle, Manager, RunEvent};
 use tokio::sync::Mutex;
 
 use server_process::ServerProcess;
 use types::{AppConfig, BackupInfo, LearnedNoiseEntry, ServerStartInfo, WorldInfo, WorldLaunchOption};
+
+fn begin_graceful_shutdown(app: AppHandle) {
+    let shutdown_in_progress = app.state::<Arc<AtomicBool>>().inner().clone();
+    if shutdown_in_progress.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let server_process = app.state::<Arc<Mutex<ServerProcess>>>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = server_process.lock().await.stop(app.clone()).await;
+        app.exit(0);
+    });
+}
 
 // ── App-Config ────────────────────────────────────────────────────────────────
 
@@ -263,9 +280,11 @@ fn get_worlds_for_launch(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let server_process = Arc::new(Mutex::new(ServerProcess::new()));
+    let shutdown_in_progress = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .manage(server_process)
+        .manage(shutdown_in_progress.clone())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -306,6 +325,15 @@ pub fn run() {
             detect_steamcmd_path,
             run_server_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |app, event| {
+            if let RunEvent::ExitRequested { api, .. } = event {
+                if shutdown_in_progress.load(Ordering::SeqCst) {
+                    return;
+                }
+                api.prevent_exit();
+                begin_graceful_shutdown(app.clone());
+            }
+        });
 }
