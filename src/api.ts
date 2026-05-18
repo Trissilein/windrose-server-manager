@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppConfig,
   BackupInfo,
+  LearnedNoiseEntry,
   ServerDescriptionFile,
   ServerState,
   WorldDescriptionFile,
@@ -61,4 +62,14 @@ export const api = {
   kickPlayer: (name: string) => invoke<void>("kick_player", { name }),
   getWorldsForLaunch: (serverRoot: string, aliases: Record<string, string>) =>
     invoke<WorldLaunchOption[]>("get_worlds_for_launch", { serverRoot, aliases }),
+
+  // Learned noise
+  getLearnedNoise: () => invoke<LearnedNoiseEntry[]>("get_learned_noise"),
+  deleteLearnedNoiseEntry: (prefix: string) =>
+    invoke<void>("delete_learned_noise_entry", { prefix }),
+  clearLearnedNoise: () => invoke<void>("clear_learned_noise"),
+
+  // Server update (SteamCMD)
+  detectSteamcmdPath: () => invoke<string | null>("detect_steamcmd_path"),
+  runServerUpdate: () => invoke<void>("run_server_update"),
 };

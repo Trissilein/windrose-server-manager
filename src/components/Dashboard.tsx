@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../api";
 import type { AppConfig, LogEvent, PlayerInfo, ServerState, WorldLaunchOption } from "../types";
@@ -142,22 +142,59 @@ export default function Dashboard({ config, onNavigate }: Props) {
   const [worldPickerWorlds, setWorldPickerWorlds] = useState<WorldLaunchOption[] | null>(null);
   const [backingUp, setBackingUp] = useState(false);
 
+  // Update state
+  const [updating, setUpdating] = useState(false);
+  const [updateLog, setUpdateLog] = useState<string[]>([]);
+  const updateLogRef = useRef<HTMLDivElement>(null);
+  const lastWorldIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     api.getStatus().then(setState).catch(console.error);
   }, []);
 
   useEffect(() => {
-    const unlisten1 = listen<ServerState>("server-status", (e) => setState(e.payload));
+    const unlisten1 = listen<ServerState>("server-status", (e) => {
+      setState(e.payload);
+      if (e.payload.world_id) lastWorldIdRef.current = e.payload.world_id;
+    });
     const unlisten2 = listen<LogEvent>("log-event", (e) => {
       const ev = e.payload;
       if (ev.category === "BootNoise" || ev.category === "Unknown") return;
       setRecentEvents((prev) => [ev, ...prev].slice(0, 8));
     });
+    const unlisten3 = listen<string | null>("update-log", (e) => {
+      setUpdateLog((prev) => [...prev, e.payload ?? ""].slice(-100));
+      // Auto-scroll to bottom
+      setTimeout(() => {
+        if (updateLogRef.current) {
+          updateLogRef.current.scrollTop = updateLogRef.current.scrollHeight;
+        }
+      }, 20);
+    });
+    const unlisten4 = listen<string | null>("version-mismatch", async (e) => {
+      if (!config.auto_update_on_demand || !config.steamcmd_path) return;
+      const worldId = e.payload ?? lastWorldIdRef.current;
+      setUpdateLog([]);
+      setUpdating(true);
+      try {
+        await api.stopServer();
+        await api.runServerUpdate();
+        if (worldId && config.server_path) {
+          await api.startServer(config.server_path, worldId);
+        }
+      } catch (err) {
+        setError(`Auto-Update fehlgeschlagen: ${String(err)}`);
+      } finally {
+        setUpdating(false);
+      }
+    });
     return () => {
       unlisten1.then((f) => f());
       unlisten2.then((f) => f());
+      unlisten3.then((f) => f());
+      unlisten4.then((f) => f());
     };
-  }, []);
+  }, [config]);
 
   useEffect(() => {
     const id = setInterval(() => setUptime(formatUptime(state.started_at)), 1000);
@@ -211,6 +248,19 @@ export default function Dashboard({ config, onNavigate }: Props) {
       setError(`Kick fehlgeschlagen: ${String(e)}`);
     } finally {
       setKickingPlayer(null);
+    }
+  }
+
+  async function handleUpdate() {
+    setUpdateLog([]);
+    setUpdating(true);
+    setError(null);
+    try {
+      await api.runServerUpdate();
+    } catch (e) {
+      setError(`Update fehlgeschlagen: ${String(e)}`);
+    } finally {
+      setUpdating(false);
     }
   }
 
@@ -274,14 +324,17 @@ export default function Dashboard({ config, onNavigate }: Props) {
           {isRunning && <span className="status-uptime">{uptime}</span>}
         </div>
         <div className="status-actions">
-          <button className="btn btn-primary" onClick={handleStartClick} disabled={!canStart}>
+          <button className="btn btn-primary" onClick={handleStartClick} disabled={!canStart || updating}>
             Start
           </button>
-          <button className="btn btn-danger" onClick={handleStop} disabled={!canStop}>
+          <button className="btn btn-danger" onClick={handleStop} disabled={!canStop || updating}>
             Stop
           </button>
+          <button className="btn btn-small" onClick={handleUpdate} disabled={!canStart || updating} title="Server via SteamCMD aktualisieren">
+            {updating ? "Aktualisiere…" : "Update"}
+          </button>
           {config.backup_path && (
-            <button className="btn btn-small" onClick={handleBackup} disabled={backingUp} title="Aktive Welt sichern">
+            <button className="btn btn-small" onClick={handleBackup} disabled={backingUp || updating} title="Aktive Welt sichern">
               {backingUp ? "…" : "Backup"}
             </button>
           )}
@@ -300,6 +353,23 @@ export default function Dashboard({ config, onNavigate }: Props) {
       {error && (
         <div className="error-banner" onClick={() => setError(null)}>
           {error} <span style={{ float: "right", opacity: 0.6 }}>✕</span>
+        </div>
+      )}
+
+      {/* ── Update-Log ── */}
+      {updateLog.length > 0 && (
+        <div className="update-log-section">
+          <div className="update-log-header">
+            <span>{updating ? "Aktualisierung läuft…" : "Update abgeschlossen"}</span>
+            {!updating && (
+              <button className="btn btn-small" onClick={() => setUpdateLog([])}>Schließen</button>
+            )}
+          </div>
+          <div className="update-log" ref={updateLogRef}>
+            {updateLog.map((line, i) => (
+              <div key={i} className="update-log-line">{line}</div>
+            ))}
+          </div>
         </div>
       )}
 

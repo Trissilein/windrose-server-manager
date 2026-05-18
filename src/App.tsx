@@ -24,6 +24,10 @@ const DEFAULT_CONFIG: AppConfig = {
   backup_path: "",
   world_aliases: {},
   window: { x: null, y: null, width: 1200, height: 800 },
+  learned_noise: [],
+  steamcmd_path: null,
+  auto_update_on_start: false,
+  auto_update_on_demand: false,
 };
 
 export default function App() {

@@ -69,12 +69,27 @@ pub struct TagValue {
 // === App Config (tool-eigene Konfiguration) ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearnedNoiseEntry {
+    pub prefix: String,
+    pub session_count: u32,
+    pub max_occurrences: u32,
+    pub last_seen: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub server_path: String,
     pub backup_path: String,
     pub world_aliases: HashMap<String, String>,
     #[serde(default)]
     pub window: WindowConfig,
+    #[serde(default)]
+    pub learned_noise: Vec<LearnedNoiseEntry>,
+    pub steamcmd_path: Option<String>,
+    #[serde(default)]
+    pub auto_update_on_start: bool,
+    #[serde(default)]
+    pub auto_update_on_demand: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +118,10 @@ impl Default for AppConfig {
             backup_path: String::new(),
             world_aliases: HashMap::new(),
             window: WindowConfig::default(),
+            learned_noise: Vec::new(),
+            steamcmd_path: None,
+            auto_update_on_start: false,
+            auto_update_on_demand: false,
         }
     }
 }
@@ -201,6 +220,7 @@ pub enum LogCategory {
     Error,
     Warning,
     Performance,
+    VersionMismatch,
     Unknown,
 }
 

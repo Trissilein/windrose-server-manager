@@ -1,7 +1,9 @@
 mod app_config;
 mod config_manager;
 mod log_parser;
+mod noise_learner;
 mod server_process;
+mod server_updater;
 mod tray;
 mod world_manager;
 
@@ -11,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use server_process::ServerProcess;
-use types::{AppConfig, BackupInfo, ServerStartInfo, WorldInfo, WorldLaunchOption};
+use types::{AppConfig, BackupInfo, LearnedNoiseEntry, ServerStartInfo, WorldInfo, WorldLaunchOption};
 
 // ── App-Config ────────────────────────────────────────────────────────────────
 
@@ -131,7 +133,13 @@ async fn start_server(
         }
     });
 
-    state.lock().await.start(&server_root, server_info, app).await
+    let cfg = app_config::load();
+    if cfg.auto_update_on_start {
+        let steamcmd = cfg.steamcmd_path.as_deref().filter(|p| !p.is_empty()).unwrap_or("steamcmd");
+        let _ = server_updater::run_update(steamcmd, &server_root, &app).await;
+    }
+    let learned_noise = cfg.learned_noise;
+    state.lock().await.start(&server_root, server_info, learned_noise, app).await
 }
 
 #[tauri::command]
@@ -148,6 +156,48 @@ async fn kick_player(
     state: tauri::State<'_, Arc<Mutex<ServerProcess>>>,
 ) -> Result<(), String> {
     state.lock().await.kick_player(&name).await
+}
+
+// ── Server Update (SteamCMD) ──────────────────────────────────────────────────
+
+#[tauri::command]
+fn detect_steamcmd_path() -> Option<String> {
+    server_updater::detect_steamcmd()
+}
+
+#[tauri::command]
+async fn run_server_update(app: tauri::AppHandle) -> Result<(), String> {
+    let cfg = app_config::load();
+    if cfg.server_path.trim().is_empty() {
+        return Err("Server-Pfad nicht konfiguriert".to_string());
+    }
+    // Fall back to bare "steamcmd" (PATH lookup) if no explicit path is set
+    let steamcmd = cfg.steamcmd_path
+        .as_deref()
+        .filter(|p| !p.is_empty())
+        .unwrap_or("steamcmd");
+    server_updater::run_update(steamcmd, &cfg.server_path, &app).await
+}
+
+// ── Learned Noise ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn get_learned_noise() -> Vec<LearnedNoiseEntry> {
+    app_config::load().learned_noise
+}
+
+#[tauri::command]
+fn delete_learned_noise_entry(prefix: String) -> Result<(), String> {
+    let mut cfg = app_config::load();
+    cfg.learned_noise.retain(|e| e.prefix != prefix);
+    app_config::save(&cfg)
+}
+
+#[tauri::command]
+fn clear_learned_noise() -> Result<(), String> {
+    let mut cfg = app_config::load();
+    cfg.learned_noise.clear();
+    app_config::save(&cfg)
 }
 
 // ── World-Management Commands ──────────────────────────────────────────────────
@@ -243,6 +293,11 @@ pub fn run() {
             stop_server,
             kick_player,
             get_worlds_for_launch,
+            get_learned_noise,
+            delete_learned_noise_entry,
+            clear_learned_noise,
+            detect_steamcmd_path,
+            run_server_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

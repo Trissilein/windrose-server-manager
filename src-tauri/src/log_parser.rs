@@ -174,6 +174,22 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::PlayerDisconnect,
             summary_template: "Verbindung getrennt: {1}",
         },
+        // ── Version mismatch ─────────────────────────────────────────────────────
+        LogPattern {
+            regex: Regex::new(r"(?i)version.*mismatch|mismatch.*version").unwrap(),
+            category: LogCategory::VersionMismatch,
+            summary_template: "",
+        },
+        LogPattern {
+            regex: Regex::new(r"LogNetVersion:.*[Cc]lient.*[Vv]ersion").unwrap(),
+            category: LogCategory::VersionMismatch,
+            summary_template: "",
+        },
+        LogPattern {
+            regex: Regex::new(r"R5LogNet:.*[Vv]ersion.*[Mm]ismatch|R5LogNet:.*incompatible.*version").unwrap(),
+            category: LogCategory::VersionMismatch,
+            summary_template: "",
+        },
         // ── Performance ───────────────────────────────────────────────────────────
         LogPattern {
             regex: Regex::new(r"^LogPerformance:").unwrap(),
@@ -210,6 +226,15 @@ fn convert_timestamp(raw_ts: &str) -> String {
         return utc.with_timezone(&Local).format("%H:%M:%S").to_string();
     }
     raw_ts.to_string()
+}
+
+/// Returns the content portion of a raw log line (everything after the [ts][frame] prefix).
+pub fn content_of(raw: &str) -> &str {
+    if let Some(caps) = TIMESTAMP_RE.captures(raw) {
+        &raw[caps.get(0).unwrap().end()..]
+    } else {
+        raw
+    }
 }
 
 pub fn parse_line(raw: &str) -> LogEvent {

@@ -49,6 +49,7 @@ export type LogCategory =
   | "Error"
   | "Warning"
   | "Performance"
+  | "VersionMismatch"
   | "Unknown";
 
 export type LogLevel = "Info" | "Warning" | "Error" | "Verbose" | "Debug";
@@ -124,12 +125,23 @@ export interface WorldSettings {
   TagParameters: Record<string, { TagName: string }>;
 }
 
+export interface LearnedNoiseEntry {
+  prefix: string;
+  session_count: number;
+  max_occurrences: number;
+  last_seen: string;
+}
+
 // Tool-eigene App-Konfiguration
 export interface AppConfig {
   server_path: string;
   backup_path: string;
   world_aliases: Record<string, string>;
   window: WindowConfig;
+  learned_noise: LearnedNoiseEntry[];
+  steamcmd_path: string | null;
+  auto_update_on_start: boolean;
+  auto_update_on_demand: boolean;
 }
 
 export interface WindowConfig {

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../api";
-import type { AppConfig, ServerDescriptionFile, ServerDescriptionPersistent, ServerState } from "../types";
+import type { AppConfig, LearnedNoiseEntry, ServerDescriptionFile, ServerDescriptionPersistent, ServerState } from "../types";
 
 const REGIONS = ["EU", "NA", "AS", "SA", "OCE"];
 
@@ -16,11 +16,18 @@ export default function ServerConfig({ config }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [serverRunning, setServerRunning] = useState(false);
+  const [learnedNoise, setLearnedNoise] = useState<LearnedNoiseEntry[]>([]);
+
+  const refreshNoise = useCallback(() => {
+    api.getLearnedNoise().then(setLearnedNoise).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!config.server_path) return;
     api.readServerConfig(config.server_path).then(setDesc).catch((e) => setError(String(e)));
   }, [config.server_path]);
+
+  useEffect(() => { refreshNoise(); }, [refreshNoise]);
 
   useEffect(() => {
     api.getStatus().then((s) => setServerRunning(s.status !== "Stopped")).catch(() => {});
@@ -63,6 +70,16 @@ export default function ServerConfig({ config }: Props) {
     const fresh = await api.readServerConfig(config.server_path);
     setDesc(fresh);
     setDirty(false);
+  }
+
+  async function deleteNoiseEntry(prefix: string) {
+    await api.deleteLearnedNoiseEntry(prefix);
+    refreshNoise();
+  }
+
+  async function clearAllNoise() {
+    await api.clearLearnedNoise();
+    refreshNoise();
   }
 
   if (!config.server_path) {
@@ -215,6 +232,58 @@ export default function ServerConfig({ config }: Props) {
           <button className="btn" disabled={saving || disabled} onClick={revert}>
             Verwerfen
           </button>
+        )}
+      </div>
+
+      <div className="noise-section">
+        <div className="noise-header">
+          <h3>Gelernte Noise-Patterns</h3>
+          {learnedNoise.length > 0 && (
+            <button className="btn btn-small btn-danger" onClick={clearAllNoise}>
+              Alle löschen
+            </button>
+          )}
+        </div>
+        {learnedNoise.length === 0 ? (
+          <p className="empty-hint">
+            Noch keine Patterns gelernt. Zeilen die ≥5× pro Session auftreten werden ab der nächsten Session als Boot-Noise behandelt.
+          </p>
+        ) : (
+          <>
+            <table className="noise-table">
+              <thead>
+                <tr>
+                  <th>Präfix</th>
+                  <th>Sessions</th>
+                  <th>Max/Session</th>
+                  <th>Zuletzt</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {learnedNoise.map((e) => (
+                  <tr key={e.prefix}>
+                    <td className="monospace noise-prefix">{e.prefix}</td>
+                    <td>{e.session_count}</td>
+                    <td>{e.max_occurrences}</td>
+                    <td>{e.last_seen}</td>
+                    <td>
+                      <button
+                        className="btn btn-small btn-icon"
+                        title="Eintrag löschen"
+                        onClick={() => deleteNoiseEntry(e.prefix)}
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="noise-hint">
+              Zeilen die ≥5× pro Session auftreten werden ab der nächsten Session als Boot-Noise behandelt.
+            </p>
+          </>
         )}
       </div>
     </div>

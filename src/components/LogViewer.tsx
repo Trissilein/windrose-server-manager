@@ -29,6 +29,7 @@ const CAT_META: Record<LogCategory, CatMeta> = {
   Warning:         { label: "Warnung",         icon: "⚠",  color: "#f0b429", bg: "rgba(240,180,41,0.12)",  border: "rgba(240,180,41,0.35)" },
   Performance:     { label: "Performance",     icon: "⚡", color: "#ff4444", bg: "rgba(255,68,68,0.12)",   border: "rgba(255,68,68,0.35)" },
   BootNoise:       { label: "Boot-Noise",      icon: "·",  color: "#666e99", bg: "rgba(102,110,153,0.10)", border: "rgba(102,110,153,0.30)" },
+  VersionMismatch: { label: "Vers.-Mismatch",  icon: "⚠",  color: "#ffaa00", bg: "rgba(255,170,0,0.12)",   border: "rgba(255,170,0,0.35)" },
   Unknown:         { label: "Sonstige",        icon: "·",  color: "#666e99", bg: "rgba(102,110,153,0.10)", border: "rgba(102,110,153,0.30)" },
 };
 
@@ -38,7 +39,7 @@ const ALL_CATEGORIES: LogCategory[] = [
   "ConnectionInfo", "RegionPing",
   "PlayerConnect", "PlayerDisconnect",
   "BackupStart", "BackupDone",
-  "Error", "Warning", "Performance",
+  "Error", "Warning", "Performance", "VersionMismatch",
   "BootNoise", "Unknown",
 ];
 

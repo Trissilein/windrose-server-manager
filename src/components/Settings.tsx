@@ -11,6 +11,7 @@ interface Props {
 export default function Settings({ config, onChange }: Props) {
   const [saving, setSaving] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [detectingSteam, setDetectingSteam] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +40,32 @@ export default function Settings({ config, onChange }: Props) {
       setError(String(e));
     } finally {
       setDetecting(false);
+    }
+  }
+
+  async function pickSteamcmdPath() {
+    const file = await open({
+      multiple: false,
+      title: "steamcmd.exe auswählen",
+      filters: [{ name: "Executable", extensions: ["exe"] }],
+    });
+    if (file && typeof file === "string") onChange({ ...config, steamcmd_path: file });
+  }
+
+  async function autoDetectSteamcmd() {
+    setDetectingSteam(true);
+    setError(null);
+    try {
+      const detected = await api.detectSteamcmdPath();
+      if (detected) {
+        onChange({ ...config, steamcmd_path: detected });
+      } else {
+        setError("SteamCMD nicht gefunden. Bitte manuell auswählen (steamcmd.exe).");
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDetectingSteam(false);
     }
   }
 
@@ -98,6 +125,44 @@ export default function Settings({ config, onChange }: Props) {
           <small className="form-hint">
             Tool-eigene Backups (getrennt von den Server-Auto-Backups in RocksDB_v2_Backups)
           </small>
+        </label>
+        <label className="form-field">
+          <span>SteamCMD-Pfad</span>
+          <div className="input-row">
+            <input
+              type="text"
+              value={config.steamcmd_path ?? ""}
+              readOnly
+              placeholder="Noch nicht gesetzt"
+            />
+            <button className="btn btn-small" onClick={autoDetectSteamcmd} disabled={detectingSteam}>
+              {detectingSteam ? "Suche…" : "Auto-Erkennen"}
+            </button>
+            <button className="btn btn-small" onClick={pickSteamcmdPath}>
+              Durchsuchen…
+            </button>
+          </div>
+          <small className="form-hint">
+            Optional — wenn SteamCMD im PATH ist (z.B. via <code>winget install Valve.SteamCMD</code>), kann dieses Feld leer bleiben.
+          </small>
+        </label>
+
+        <label className="form-field form-toggle">
+          <span>Vor jedem Start automatisch aktualisieren</span>
+          <input
+            type="checkbox"
+            checked={config.auto_update_on_start}
+            onChange={(e) => onChange({ ...config, auto_update_on_start: e.target.checked })}
+          />
+        </label>
+
+        <label className="form-field form-toggle">
+          <span>Bei Version-Mismatch automatisch aktualisieren (nur wenn 0 Spieler)</span>
+          <input
+            type="checkbox"
+            checked={config.auto_update_on_demand}
+            onChange={(e) => onChange({ ...config, auto_update_on_demand: e.target.checked })}
+          />
         </label>
       </div>
 

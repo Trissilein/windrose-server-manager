@@ -7,8 +7,8 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
-use crate::log_parser;
-use crate::types::{LogCategory, PlayerInfo, ServerStartInfo, ServerState, ServerStatus};
+use crate::{app_config, log_parser, noise_learner};
+use crate::types::{LearnedNoiseEntry, LogCategory, PlayerInfo, ServerStartInfo, ServerState, ServerStatus};
 
 pub struct ServerProcess {
     pub state: Arc<Mutex<ServerState>>,
@@ -33,6 +33,7 @@ impl ServerProcess {
         &self,
         server_root: &str,
         server_info: Option<ServerStartInfo>,
+        learned_noise: Vec<LearnedNoiseEntry>,
         app: AppHandle,
     ) -> Result<(), String> {
         {
@@ -105,13 +106,21 @@ impl ServerProcess {
         let pid_clone = self.child_pid.clone();
         let stdin_clone = self.child_stdin.clone();
         let app_clone = app.clone();
+        let mut noise_learner = noise_learner::NoiseLearner::new(&learned_noise);
 
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
-                let event = log_parser::parse_line(&line);
+                let mut event = log_parser::parse_line(&line);
+
+                if matches!(event.category, LogCategory::Unknown | LogCategory::Warning) {
+                    let content = log_parser::content_of(&line);
+                    if noise_learner.observe(content) {
+                        event.category = LogCategory::BootNoise;
+                    }
+                }
 
                 {
                     let mut state = state_clone.lock().await;
@@ -168,6 +177,13 @@ impl ServerProcess {
                                 }
                             }
                         }
+                        LogCategory::VersionMismatch => {
+                            // Only trigger auto-update when no players are online
+                            if state.players.is_empty() {
+                                let world_id = state.world_id.clone();
+                                let _ = app_clone.emit("version-mismatch", world_id);
+                            }
+                        }
                         _ => {}
                     }
                     if dirty {
@@ -175,6 +191,14 @@ impl ServerProcess {
                     }
                 }
                 let _ = app_clone.emit("log-event", &event);
+            }
+
+            // Persist any newly learned noise prefixes
+            let new_entries = noise_learner.finalize(&chrono::Local::now().format("%Y-%m-%d").to_string());
+            if !new_entries.is_empty() {
+                let mut cfg = app_config::load();
+                noise_learner::merge_learned(&mut cfg.learned_noise, new_entries);
+                let _ = app_config::save(&cfg);
             }
 
             {
