@@ -1,7 +1,8 @@
-use std::path::Path;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -89,6 +90,185 @@ fn close_open_player_sessions(world_id: Option<String>, players: &[PlayerInfo], 
     }
 }
 
+fn server_log_dir(server_root: &str) -> PathBuf {
+    Path::new(server_root).join("R5").join("Saved").join("Logs")
+}
+
+fn newest_log_file(log_dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(log_dir)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("log") {
+                return None;
+            }
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, path))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+}
+
+async fn process_log_line(
+    line: &str,
+    state_clone: &Arc<Mutex<ServerState>>,
+    app_clone: &AppHandle,
+    noise_learner: &mut noise_learner::NoiseLearner,
+) {
+    let mut event = log_parser::parse_line(line);
+
+    if matches!(event.category, LogCategory::Unknown | LogCategory::Warning) {
+        let content = log_parser::content_of(line);
+        if noise_learner.observe(content) {
+            event.category = LogCategory::BootNoise;
+        }
+    }
+
+    {
+        let mut state = state_clone.lock().await;
+        let mut dirty = false;
+        match event.category {
+            LogCategory::ServerReady => {
+                state.status = ServerStatus::Running;
+                dirty = true;
+            }
+            LogCategory::ConnectionInfo => {
+                if let Some(code) = event.summary.strip_prefix("Invite Code: ") {
+                    state.invite_code = Some(code.to_string());
+                    dirty = true;
+                }
+            }
+            LogCategory::ServerInfo => {
+                if let Some(ver) = event.summary.strip_prefix("Server Version: ") {
+                    state.version = Some(ver.trim().to_string());
+                    dirty = true;
+                }
+            }
+            LogCategory::Shutdown => {
+                state.status = ServerStatus::Stopping;
+                dirty = true;
+            }
+            LogCategory::PlayerConnect => {
+                let name = event
+                    .summary
+                    .strip_prefix("Beitritt: ")
+                    .unwrap_or(&event.summary)
+                    .trim()
+                    .to_string();
+                if !name.is_empty() && !state.players.iter().any(|p| p.name == name) {
+                    let joined_at = chrono::Local::now().to_rfc3339();
+                    if let Some(world_id) = state.world_id.as_deref() {
+                        record_player_connect(world_id, &name, &joined_at);
+                    }
+                    state.players.push(PlayerInfo { name, joined_at });
+                    state.player_count = Some(state.players.len() as u32);
+                    dirty = true;
+                }
+            }
+            LogCategory::PlayerDisconnect => {
+                let name = event
+                    .summary
+                    .strip_prefix("Verlassen: ")
+                    .or_else(|| event.summary.strip_prefix("Verbindung getrennt: "))
+                    .unwrap_or(&event.summary)
+                    .trim()
+                    .to_string();
+                if !name.is_empty() {
+                    let player = state.players.iter().find(|p| p.name == name).cloned();
+                    if let Some(player) = player {
+                        let disconnected_at = chrono::Local::now().to_rfc3339();
+                        if let Some(world_id) = state.world_id.as_deref() {
+                            record_player_disconnect(world_id, &player, &disconnected_at);
+                        }
+                        state.players.retain(|p| p.name != name);
+                        state.player_count = Some(state.players.len() as u32);
+                        dirty = true;
+                    }
+                }
+            }
+            LogCategory::VersionMismatch => {
+                if state.players.is_empty() {
+                    let world_id = state.world_id.clone();
+                    let _ = app_clone.emit("version-mismatch", world_id);
+                }
+            }
+            _ => {}
+        }
+        if dirty {
+            let _ = app_clone.emit("server-status", state.clone());
+        }
+    }
+    let _ = app_clone.emit("log-event", &event);
+}
+
+async fn tail_server_log(
+    log_dir: PathBuf,
+    state_clone: Arc<Mutex<ServerState>>,
+    app_clone: AppHandle,
+    learned_noise: Vec<LearnedNoiseEntry>,
+    started_at: SystemTime,
+) {
+    let mut current_path: Option<PathBuf> = None;
+    let mut offset = 0_u64;
+    let mut noise_learner = noise_learner::NoiseLearner::new(&learned_noise);
+
+    loop {
+        if let Some(path) = newest_log_file(&log_dir) {
+            let changed_file = current_path.as_ref() != Some(&path);
+            if changed_file {
+                offset = std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| {
+                        let len = m.len();
+                        let modified = m.modified().ok()?;
+                        Some(if modified < started_at { len } else { 0 })
+                    })
+                    .unwrap_or(0);
+                current_path = Some(path.clone());
+            }
+
+            if let Ok(mut file) = std::fs::File::open(&path) {
+                if let Ok(len) = file.metadata().map(|m| m.len()) {
+                    if len < offset {
+                        offset = 0;
+                    }
+                    if len > offset && file.seek(SeekFrom::Start(offset)).is_ok() {
+                        let mut chunk = String::new();
+                        if file.read_to_string(&mut chunk).is_ok() {
+                            offset = file.stream_position().unwrap_or(len);
+                            for line in chunk.lines().filter(|line| !line.trim().is_empty()) {
+                                process_log_line(
+                                    line,
+                                    &state_clone,
+                                    &app_clone,
+                                    &mut noise_learner,
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            let state = state_clone.lock().await;
+            if state.status == ServerStatus::Stopped {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    let new_entries = noise_learner.finalize(&chrono::Local::now().format("%Y-%m-%d").to_string());
+    if !new_entries.is_empty() {
+        let mut cfg = app_config::load();
+        noise_learner::merge_learned(&mut cfg.learned_noise, new_entries);
+        let _ = app_config::save(&cfg);
+    }
+}
+
 pub struct ServerProcess {
     pub state: Arc<Mutex<ServerState>>,
     child_pid: Arc<Mutex<Option<u32>>>,
@@ -172,6 +352,7 @@ impl ServerProcess {
             cmd.creation_flags(0x00000200 | 0x00008000);
         }
 
+        let log_started_at = SystemTime::now();
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Server konnte nicht gestartet werden: {e}"))?;
@@ -199,112 +380,21 @@ impl ServerProcess {
         let pid_clone = self.child_pid.clone();
         let stdin_clone = self.child_stdin.clone();
         let app_clone = app.clone();
-        let mut noise_learner = noise_learner::NoiseLearner::new(&learned_noise);
+        let log_state = self.state.clone();
+        let log_app = app.clone();
+        let log_dir = server_log_dir(server_root);
+        tokio::spawn(tail_server_log(
+            log_dir,
+            log_state,
+            log_app,
+            learned_noise,
+            log_started_at,
+        ));
 
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
-
-            while let Ok(Some(line)) = lines.next_line().await {
-                let mut event = log_parser::parse_line(&line);
-
-                if matches!(event.category, LogCategory::Unknown | LogCategory::Warning) {
-                    let content = log_parser::content_of(&line);
-                    if noise_learner.observe(content) {
-                        event.category = LogCategory::BootNoise;
-                    }
-                }
-
-                {
-                    let mut state = state_clone.lock().await;
-                    let mut dirty = false;
-                    match event.category {
-                        LogCategory::ServerReady => {
-                            state.status = ServerStatus::Running;
-                            dirty = true;
-                        }
-                        LogCategory::ConnectionInfo => {
-                            if let Some(code) = event.summary.strip_prefix("Invite Code: ") {
-                                state.invite_code = Some(code.to_string());
-                                dirty = true;
-                            }
-                        }
-                        LogCategory::ServerInfo => {
-                            if let Some(ver) = event.summary.strip_prefix("Server Version: ") {
-                                state.version = Some(ver.trim().to_string());
-                                dirty = true;
-                            }
-                        }
-                        LogCategory::Shutdown => {
-                            state.status = ServerStatus::Stopping;
-                            dirty = true;
-                        }
-                        LogCategory::PlayerConnect => {
-                            let name = event
-                                .summary
-                                .strip_prefix("Beitritt: ")
-                                .unwrap_or(&event.summary)
-                                .trim()
-                                .to_string();
-                            if !name.is_empty() && !state.players.iter().any(|p| p.name == name) {
-                                let joined_at = chrono::Local::now().to_rfc3339();
-                                if let Some(world_id) = state.world_id.as_deref() {
-                                    record_player_connect(world_id, &name, &joined_at);
-                                }
-                                state.players.push(PlayerInfo { name, joined_at });
-                                state.player_count = Some(state.players.len() as u32);
-                                dirty = true;
-                            }
-                        }
-                        LogCategory::PlayerDisconnect => {
-                            let name = event
-                                .summary
-                                .strip_prefix("Verlassen: ")
-                                .or_else(|| event.summary.strip_prefix("Verbindung getrennt: "))
-                                .unwrap_or(&event.summary)
-                                .trim()
-                                .to_string();
-                            if !name.is_empty() {
-                                let player = state.players.iter().find(|p| p.name == name).cloned();
-                                if let Some(player) = player {
-                                    let disconnected_at = chrono::Local::now().to_rfc3339();
-                                    if let Some(world_id) = state.world_id.as_deref() {
-                                        record_player_disconnect(
-                                            world_id,
-                                            &player,
-                                            &disconnected_at,
-                                        );
-                                    }
-                                    state.players.retain(|p| p.name != name);
-                                    state.player_count = Some(state.players.len() as u32);
-                                    dirty = true;
-                                }
-                            }
-                        }
-                        LogCategory::VersionMismatch => {
-                            // Only trigger auto-update when no players are online
-                            if state.players.is_empty() {
-                                let world_id = state.world_id.clone();
-                                let _ = app_clone.emit("version-mismatch", world_id);
-                            }
-                        }
-                        _ => {}
-                    }
-                    if dirty {
-                        let _ = app_clone.emit("server-status", state.clone());
-                    }
-                }
-                let _ = app_clone.emit("log-event", &event);
-            }
-
-            // Persist any newly learned noise prefixes
-            let new_entries =
-                noise_learner.finalize(&chrono::Local::now().format("%Y-%m-%d").to_string());
-            if !new_entries.is_empty() {
-                let mut cfg = app_config::load();
-                noise_learner::merge_learned(&mut cfg.learned_noise, new_entries);
-                let _ = app_config::save(&cfg);
-            }
+            while let Ok(Some(_)) = lines.next_line().await {}
 
             {
                 let mut state = state_clone.lock().await;

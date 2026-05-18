@@ -1,4 +1,4 @@
-use chrono::{TimeZone, Utc, Local};
+use chrono::{Local, TimeZone, Utc};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -11,9 +11,7 @@ struct LogPattern {
 }
 
 // Strips [000000]-style inline frame numbers that R5LogNet embeds in message bodies
-static INLINE_FRAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[\d{4,6}\]\s*").unwrap()
-});
+static INLINE_FRAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\d{4,6}\]\s*").unwrap());
 
 fn strip_inline_frames(s: &str) -> String {
     INLINE_FRAME_RE.replace_all(s, "").trim().to_string()
@@ -153,6 +151,11 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::PlayerDisconnect,
             summary_template: "Verlassen: {1}",
         },
+        LogPattern {
+            regex: Regex::new(r"LogNet:\s+Join succeeded:\s+(.+?)\s*$").unwrap(),
+            category: LogCategory::PlayerConnect,
+            summary_template: "Beitritt: {1}",
+        },
         // Standard UE5 join/logout (fallback for non-R5 servers)
         LogPattern {
             regex: Regex::new(r"LogNet.*Join request.*[?&]Name=([^&\s\]]+)").unwrap(),
@@ -240,7 +243,9 @@ pub fn content_of(raw: &str) -> &str {
 pub fn parse_line(raw: &str) -> LogEvent {
     let (timestamp, frame, content) = if let Some(caps) = TIMESTAMP_RE.captures(raw) {
         let ts = caps.get(1).map(|m| convert_timestamp(m.as_str()));
-        let fr = caps.get(2).and_then(|m| m.as_str().trim().parse::<u32>().ok());
+        let fr = caps
+            .get(2)
+            .and_then(|m| m.as_str().trim().parse::<u32>().ok());
         let rest = &raw[caps.get(0).unwrap().end()..];
         (ts, fr, rest)
     } else {
@@ -281,7 +286,9 @@ pub fn parse_line(raw: &str) -> LogEvent {
 
     let summary = match category {
         // Error/Warning/Performance: full content, inline frames stripped
-        LogCategory::Error | LogCategory::Warning | LogCategory::Performance => strip_inline_frames(content),
+        LogCategory::Error | LogCategory::Warning | LogCategory::Performance => {
+            strip_inline_frames(content)
+        }
         // Unknown: strip frames + cap at 200 chars to avoid noise walls
         _ => strip_inline_frames(content).chars().take(200).collect(),
     };
@@ -293,5 +300,24 @@ pub fn parse_line(raw: &str) -> LogEvent {
         level,
         summary,
         raw_line: raw.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_windrose_join_succeeded_as_player_connect() {
+        let event = parse_line("[2026.05.18-14.04.37:106][461]LogNet: Join succeeded: TristARRRnX");
+        assert_eq!(event.category, LogCategory::PlayerConnect);
+        assert_eq!(event.summary, "Beitritt: TristARRRnX");
+    }
+
+    #[test]
+    fn parses_r5_said_farewell_as_player_disconnect() {
+        let event = parse_line("     1. Name 'TristARRRnX'. AccountId 'abc'. State 'SaidFarewell'. TimeOnServer +00:00:59.963.");
+        assert_eq!(event.category, LogCategory::PlayerDisconnect);
+        assert_eq!(event.summary, "Verlassen: TristARRRnX");
     }
 }
