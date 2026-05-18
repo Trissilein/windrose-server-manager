@@ -27,6 +27,12 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::BootNoise,
             summary_template: "",
         },
+        // ── ReplicationGraph warnings fire every boot for unregistered actors ─
+        LogPattern {
+            regex: Regex::new(r"^(R5)?LogReplicationGraph: Warning:").unwrap(),
+            category: LogCategory::BootNoise,
+            summary_template: "",
+        },
         // ── Other UE5 subsystem Warning: lines that are always noise ──────────
         LogPattern {
             regex: Regex::new(
@@ -43,11 +49,22 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::BootNoise,
             summary_template: "",
         },
+        // ── Source file path lines from CheckMonitor / error backtraces ────────
+        LogPattern {
+            regex: Regex::new(r"^\[D:[/\\]Source[/\\]Build").unwrap(),
+            category: LogCategory::BootNoise,
+            summary_template: "",
+        },
         // ── Server lifecycle ──────────────────────────────────────────────────
         LogPattern {
             regex: Regex::new(r"R5LogGameInstance.*Version\s+=\s+(.+)").unwrap(),
             category: LogCategory::ServerInfo,
             summary_template: "Server Version: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^Unreal Engine version:\s+(.+)").unwrap(),
+            category: LogCategory::ServerInfo,
+            summary_template: "Engine: {1}",
         },
         LogPattern {
             regex: Regex::new(r"R5BLDalAsyncQueue::LoadDb.*Successfully loaded DB (.+)").unwrap(),
@@ -106,9 +123,9 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::BackupDone,
             summary_template: "Backup abgeschlossen",
         },
-        // ── CheckMonitor health summary (periodic report, not an error event) ──
+        // ── CheckMonitor health summary (periodic report, not error events) ────
         LogPattern {
-            regex: Regex::new(r"^R5Error Report Calls TotalNum").unwrap(),
+            regex: Regex::new(r"^R5(Error|Check|Ensure) Report Calls TotalNum").unwrap(),
             category: LogCategory::Warning,
             summary_template: "",
         },
