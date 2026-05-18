@@ -106,6 +106,17 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::BackupDone,
             summary_template: "Backup abgeschlossen",
         },
+        // ── CheckMonitor health summary (periodic report, not an error event) ──
+        LogPattern {
+            regex: Regex::new(r"^R5Error Report Calls TotalNum").unwrap(),
+            category: LogCategory::Warning,
+            summary_template: "",
+        },
+        LogPattern {
+            regex: Regex::new(r"^R5LogCheck: Warning:").unwrap(),
+            category: LogCategory::Warning,
+            summary_template: "",
+        },
         // ── Shutdown ──────────────────────────────────────────────────────────
         LogPattern {
             regex: Regex::new(r"Engine exit requested|RequestExit").unwrap(),
