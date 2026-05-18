@@ -23,7 +23,9 @@ fn load_app_config() -> AppConfig {
 }
 
 #[tauri::command]
-fn save_app_config(config: AppConfig) -> Result<(), String> {
+fn save_app_config(mut config: AppConfig) -> Result<(), String> {
+    let existing = app_config::load();
+    config.player_history = existing.player_history;
     app_config::save(&config)
 }
 

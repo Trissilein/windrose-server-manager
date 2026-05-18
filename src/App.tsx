@@ -23,6 +23,7 @@ const DEFAULT_CONFIG: AppConfig = {
   server_path: "",
   backup_path: "",
   world_aliases: {},
+  player_history: {},
   window: { x: null, y: null, width: 1200, height: 800 },
   learned_noise: [],
   steamcmd_path: null,

@@ -8,6 +8,16 @@ export interface PlayerInfo {
   joined_at: string;
 }
 
+export interface PlayerHistoryEntry {
+  name: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  last_session_started_at: string;
+  last_session_ended_at: string | null;
+  total_play_seconds: number;
+  connect_count: number;
+}
+
 export interface WorldLaunchOption {
   id: string;
   alias: string | null;
@@ -137,6 +147,7 @@ export interface AppConfig {
   server_path: string;
   backup_path: string;
   world_aliases: Record<string, string>;
+  player_history: Record<string, Record<string, PlayerHistoryEntry>>;
   window: WindowConfig;
   learned_noise: LearnedNoiseEntry[];
   steamcmd_path: string | null;

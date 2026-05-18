@@ -82,6 +82,8 @@ pub struct AppConfig {
     pub backup_path: String,
     pub world_aliases: HashMap<String, String>,
     #[serde(default)]
+    pub player_history: HashMap<String, HashMap<String, PlayerHistoryEntry>>,
+    #[serde(default)]
     pub window: WindowConfig,
     #[serde(default)]
     pub learned_noise: Vec<LearnedNoiseEntry>,
@@ -117,6 +119,7 @@ impl Default for AppConfig {
             server_path: String::new(),
             backup_path: String::new(),
             world_aliases: HashMap::new(),
+            player_history: HashMap::new(),
             window: WindowConfig::default(),
             learned_noise: Vec::new(),
             steamcmd_path: None,
@@ -141,6 +144,17 @@ pub enum ServerStatus {
 pub struct PlayerInfo {
     pub name: String,
     pub joined_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerHistoryEntry {
+    pub name: String,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+    pub last_session_started_at: String,
+    pub last_session_ended_at: Option<String>,
+    pub total_play_seconds: u64,
+    pub connect_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

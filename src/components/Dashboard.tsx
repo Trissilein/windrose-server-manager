@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../api";
-import type { AppConfig, LogEvent, PlayerInfo, ServerState, WorldLaunchOption } from "../types";
+import type { AppConfig, LogEvent, PlayerHistoryEntry, PlayerInfo, ServerState, WorldLaunchOption } from "../types";
 
 interface Props {
   config: AppConfig;
@@ -11,10 +11,48 @@ interface Props {
 function formatUptime(startedAt: string | null): string {
   if (!startedAt) return "–";
   const diff = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
-  const h = Math.floor(diff / 3600);
-  const m = Math.floor((diff % 3600) / 60);
-  const s = diff % 60;
+  return formatDuration(diff);
+}
+
+function formatDuration(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const d = Math.floor(safeSeconds / 86400);
+  const h = Math.floor((safeSeconds % 86400) / 3600);
+  const m = Math.floor((safeSeconds % 3600) / 60);
+  const s = safeSeconds % 60;
+  if (d > 0) return `${d}d ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function formatSessionDuration(startedAt: string): string {
+  return formatDuration((Date.now() - new Date(startedAt).getTime()) / 1000);
+}
+
+function formatTotalPlaytime(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(safeSeconds / 3600);
+  const m = Math.floor((safeSeconds % 3600) / 60);
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  return `${m}m`;
+}
+
+function formatDateTime(iso: string | null): string {
+  if (!iso) return "–";
+  try {
+    return new Date(iso).toLocaleString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "–";
+  }
+}
+
+function historySortValue(entry: PlayerHistoryEntry): number {
+  const lastSession = entry.last_session_ended_at ?? entry.last_session_started_at ?? entry.last_seen_at;
+  return new Date(lastSession).getTime();
 }
 
 function formatMemory(mb: number): string {
@@ -137,6 +175,9 @@ export default function Dashboard({ config, onNavigate }: Props) {
   const [copied, setCopied] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [kickingPlayer, setKickingPlayer] = useState<string | null>(null);
+  const [playerHistory, setPlayerHistory] = useState<Record<string, Record<string, PlayerHistoryEntry>>>(
+    config.player_history ?? {},
+  );
 
   // World picker state
   const [worldPickerWorlds, setWorldPickerWorlds] = useState<WorldLaunchOption[] | null>(null);
@@ -149,18 +190,40 @@ export default function Dashboard({ config, onNavigate }: Props) {
   const lastWorldIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    api.getStatus().then(setState).catch(console.error);
+    api.getStatus().then((currentState) => {
+      setState(currentState);
+      if (currentState.world_id) lastWorldIdRef.current = currentState.world_id;
+    }).catch(console.error);
   }, []);
+
+  useEffect(() => {
+    setPlayerHistory(config.player_history ?? {});
+  }, [config.player_history]);
+
+  async function refreshPlayerHistory() {
+    try {
+      const latest = await api.loadAppConfig();
+      setPlayerHistory(latest.player_history ?? {});
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
   useEffect(() => {
     const unlisten1 = listen<ServerState>("server-status", (e) => {
       setState(e.payload);
       if (e.payload.world_id) lastWorldIdRef.current = e.payload.world_id;
+      if (e.payload.status === "Stopped") {
+        void refreshPlayerHistory();
+      }
     });
     const unlisten2 = listen<LogEvent>("log-event", (e) => {
       const ev = e.payload;
       if (ev.category === "BootNoise" || ev.category === "Unknown") return;
       setRecentEvents((prev) => [ev, ...prev].slice(0, 8));
+      if (ev.category === "PlayerConnect" || ev.category === "PlayerDisconnect") {
+        void refreshPlayerHistory();
+      }
     });
     const unlisten3 = listen<string | null>("update-log", (e) => {
       setUpdateLog((prev) => [...prev, e.payload ?? ""].slice(-100));
@@ -303,6 +366,15 @@ export default function Dashboard({ config, onNavigate }: Props) {
   const canStop = state.status === "Running" || state.status === "Starting";
   const isRunning = state.status === "Running";
   const cpuColor = state.cpu_percent > 80 ? "var(--red)" : state.cpu_percent > 60 ? "var(--yellow)" : "var(--accent)";
+  const historyWorldId = state.world_id ?? lastWorldIdRef.current;
+  const currentWorldHistory = historyWorldId ? Object.values(playerHistory[historyWorldId] ?? {}) : [];
+  const onlineNames = new Set(state.players.map((p) => p.name));
+  const sortedPlayerHistory = [...currentWorldHistory].sort((a, b) => {
+    const aOnline = onlineNames.has(a.name) ? 1 : 0;
+    const bOnline = onlineNames.has(b.name) ? 1 : 0;
+    if (aOnline !== bOnline) return bOnline - aOnline;
+    return historySortValue(b) - historySortValue(a);
+  });
 
   return (
     <div className="dashboard">
@@ -465,10 +537,10 @@ export default function Dashboard({ config, onNavigate }: Props) {
           </div>
         </div>
 
-        {/* Spielerliste */}
+        {/* Aktuelle Spieler */}
         <div className="dash-panel">
           <div className="dash-panel-title" style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>Spieler</span>
+            <span>Aktuell online</span>
             <span style={{ color: "var(--muted)", fontWeight: 400 }}>
               {isRunning
                 ? `${state.players.length} / ${state.max_players ?? "?"}`
@@ -484,15 +556,15 @@ export default function Dashboard({ config, onNavigate }: Props) {
             <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
               {state.players.map((p) => (
                 <li key={p.name} style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8,
                   padding: "6px 8px", borderRadius: 6,
                   background: "var(--surface2)", fontSize: 13,
                 }}>
                   <div>
-                    <span style={{ fontWeight: 600 }}>{p.name}</span>
-                    <span style={{ color: "var(--muted)", marginLeft: 8, fontSize: 11 }}>
-                      seit {formatJoinTime(p.joined_at)}
-                    </span>
+                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ color: "var(--muted)", fontSize: 11 }}>
+                      seit {formatJoinTime(p.joined_at)} · {formatSessionDuration(p.joined_at)}
+                    </div>
                   </div>
                   <button
                     className="btn btn-small btn-danger-soft"
@@ -508,6 +580,45 @@ export default function Dashboard({ config, onNavigate }: Props) {
             </ul>
           )}
         </div>
+      </div>
+
+      {/* ── Spieler-Historie ── */}
+      <div className="events-section player-history-section">
+        <h3>Zuletzt auf dem Server</h3>
+        {!historyWorldId ? (
+          <p className="empty-hint">Keine Welt aktiv</p>
+        ) : sortedPlayerHistory.length === 0 ? (
+          <p className="empty-hint">Noch keine Spieler-Historie für diese Welt</p>
+        ) : (
+          <div className="player-history-list">
+            {sortedPlayerHistory.map((entry) => {
+              const online = onlineNames.has(entry.name);
+              const lastSession = online
+                ? entry.last_session_started_at
+                : entry.last_session_ended_at ?? entry.last_seen_at;
+              return (
+                <div key={entry.name} className={`player-history-row ${online ? "player-online" : ""}`}>
+                  <div className="player-history-main">
+                    <span className="player-history-name">{entry.name}</span>
+                    {online && <span className="badge badge-active">Online</span>}
+                  </div>
+                  <div className="player-history-stat">
+                    <span>Letzte Session</span>
+                    <strong>{formatDateTime(lastSession)}</strong>
+                  </div>
+                  <div className="player-history-stat">
+                    <span>Gesamtspielzeit</span>
+                    <strong>{formatTotalPlaytime(entry.total_play_seconds)}</strong>
+                  </div>
+                  <div className="player-history-stat">
+                    <span>Verbindungen</span>
+                    <strong>{entry.connect_count}</strong>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* ── Log-Feed ── */}

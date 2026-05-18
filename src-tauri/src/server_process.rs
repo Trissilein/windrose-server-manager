@@ -2,13 +2,92 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use tauri::{AppHandle, Emitter};
 
+use crate::types::{
+    LearnedNoiseEntry, LogCategory, PlayerHistoryEntry, PlayerInfo, ServerStartInfo, ServerState,
+    ServerStatus,
+};
 use crate::{app_config, log_parser, noise_learner};
-use crate::types::{LearnedNoiseEntry, LogCategory, PlayerInfo, ServerStartInfo, ServerState, ServerStatus};
+
+fn session_seconds(started_at: &str, ended_at: &str) -> u64 {
+    let started = chrono::DateTime::parse_from_rfc3339(started_at);
+    let ended = chrono::DateTime::parse_from_rfc3339(ended_at);
+    match (started, ended) {
+        (Ok(started), Ok(ended)) => {
+            ended.signed_duration_since(started).num_seconds().max(0) as u64
+        }
+        _ => 0,
+    }
+}
+
+fn record_player_connect(world_id: &str, name: &str, connected_at: &str) {
+    if world_id.trim().is_empty() || name.trim().is_empty() {
+        return;
+    }
+
+    let mut cfg = app_config::load();
+    let world_history = cfg.player_history.entry(world_id.to_string()).or_default();
+    let entry = world_history
+        .entry(name.to_string())
+        .or_insert_with(|| PlayerHistoryEntry {
+            name: name.to_string(),
+            first_seen_at: connected_at.to_string(),
+            last_seen_at: connected_at.to_string(),
+            last_session_started_at: connected_at.to_string(),
+            last_session_ended_at: None,
+            total_play_seconds: 0,
+            connect_count: 0,
+        });
+
+    entry.last_seen_at = connected_at.to_string();
+    entry.last_session_started_at = connected_at.to_string();
+    entry.last_session_ended_at = None;
+    entry.connect_count = entry.connect_count.saturating_add(1);
+
+    let _ = app_config::save(&cfg);
+}
+
+fn record_player_disconnect(world_id: &str, player: &PlayerInfo, disconnected_at: &str) {
+    if world_id.trim().is_empty() || player.name.trim().is_empty() {
+        return;
+    }
+
+    let mut cfg = app_config::load();
+    let world_history = cfg.player_history.entry(world_id.to_string()).or_default();
+    let entry = world_history
+        .entry(player.name.clone())
+        .or_insert_with(|| PlayerHistoryEntry {
+            name: player.name.clone(),
+            first_seen_at: player.joined_at.clone(),
+            last_seen_at: disconnected_at.to_string(),
+            last_session_started_at: player.joined_at.clone(),
+            last_session_ended_at: None,
+            total_play_seconds: 0,
+            connect_count: 1,
+        });
+
+    entry.last_seen_at = disconnected_at.to_string();
+    entry.last_session_started_at = player.joined_at.clone();
+    entry.last_session_ended_at = Some(disconnected_at.to_string());
+    entry.total_play_seconds = entry
+        .total_play_seconds
+        .saturating_add(session_seconds(&player.joined_at, disconnected_at));
+
+    let _ = app_config::save(&cfg);
+}
+
+fn close_open_player_sessions(world_id: Option<String>, players: &[PlayerInfo], ended_at: &str) {
+    let Some(world_id) = world_id else {
+        return;
+    };
+    for player in players {
+        record_player_disconnect(&world_id, player, ended_at);
+    }
+}
 
 pub struct ServerProcess {
     pub state: Arc<Mutex<ServerState>>,
@@ -59,10 +138,22 @@ impl ServerProcess {
             state.started_at = Some(chrono::Local::now().to_rfc3339());
             if let Some(ref info) = server_info {
                 state.server_name = Some(info.server_name.clone());
-                state.invite_code = if info.invite_code.is_empty() { None } else { Some(info.invite_code.clone()) };
-                state.password = if info.password.is_empty() { None } else { Some(info.password.clone()) };
+                state.invite_code = if info.invite_code.is_empty() {
+                    None
+                } else {
+                    Some(info.invite_code.clone())
+                };
+                state.password = if info.password.is_empty() {
+                    None
+                } else {
+                    Some(info.password.clone())
+                };
                 state.max_players = Some(info.max_player_count);
-                state.world_id = if info.world_id.is_empty() { None } else { Some(info.world_id.clone()) };
+                state.world_id = if info.world_id.is_empty() {
+                    None
+                } else {
+                    Some(info.world_id.clone())
+                };
             }
         }
         let _ = app.emit("server-status", self.state.lock().await.clone());
@@ -81,7 +172,9 @@ impl ServerProcess {
             cmd.creation_flags(0x00000200 | 0x00008000);
         }
 
-        let mut child = cmd.spawn().map_err(|e| format!("Server konnte nicht gestartet werden: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Server konnte nicht gestartet werden: {e}"))?;
         let pid = child.id().unwrap_or(0);
 
         *self.child_stdin.lock().await = child.stdin.take();
@@ -147,31 +240,42 @@ impl ServerProcess {
                             dirty = true;
                         }
                         LogCategory::PlayerConnect => {
-                            let name = event.summary
+                            let name = event
+                                .summary
                                 .strip_prefix("Beitritt: ")
                                 .unwrap_or(&event.summary)
                                 .trim()
                                 .to_string();
                             if !name.is_empty() && !state.players.iter().any(|p| p.name == name) {
-                                state.players.push(PlayerInfo {
-                                    name,
-                                    joined_at: chrono::Local::now().to_rfc3339(),
-                                });
+                                let joined_at = chrono::Local::now().to_rfc3339();
+                                if let Some(world_id) = state.world_id.as_deref() {
+                                    record_player_connect(world_id, &name, &joined_at);
+                                }
+                                state.players.push(PlayerInfo { name, joined_at });
                                 state.player_count = Some(state.players.len() as u32);
                                 dirty = true;
                             }
                         }
                         LogCategory::PlayerDisconnect => {
-                            let name = event.summary
+                            let name = event
+                                .summary
                                 .strip_prefix("Verlassen: ")
                                 .or_else(|| event.summary.strip_prefix("Verbindung getrennt: "))
                                 .unwrap_or(&event.summary)
                                 .trim()
                                 .to_string();
                             if !name.is_empty() {
-                                let before = state.players.len();
-                                state.players.retain(|p| p.name != name);
-                                if state.players.len() != before {
+                                let player = state.players.iter().find(|p| p.name == name).cloned();
+                                if let Some(player) = player {
+                                    let disconnected_at = chrono::Local::now().to_rfc3339();
+                                    if let Some(world_id) = state.world_id.as_deref() {
+                                        record_player_disconnect(
+                                            world_id,
+                                            &player,
+                                            &disconnected_at,
+                                        );
+                                    }
+                                    state.players.retain(|p| p.name != name);
                                     state.player_count = Some(state.players.len() as u32);
                                     dirty = true;
                                 }
@@ -194,7 +298,8 @@ impl ServerProcess {
             }
 
             // Persist any newly learned noise prefixes
-            let new_entries = noise_learner.finalize(&chrono::Local::now().format("%Y-%m-%d").to_string());
+            let new_entries =
+                noise_learner.finalize(&chrono::Local::now().format("%Y-%m-%d").to_string());
             if !new_entries.is_empty() {
                 let mut cfg = app_config::load();
                 noise_learner::merge_learned(&mut cfg.learned_noise, new_entries);
@@ -203,6 +308,8 @@ impl ServerProcess {
 
             {
                 let mut state = state_clone.lock().await;
+                let ended_at = chrono::Local::now().to_rfc3339();
+                close_open_player_sessions(state.world_id.clone(), &state.players, &ended_at);
                 state.status = ServerStatus::Stopped;
                 state.pid = None;
                 state.invite_code = None;
@@ -318,7 +425,9 @@ impl ServerProcess {
                 #[cfg(target_os = "windows")]
                 {
                     use windows_sys::Win32::Foundation::CloseHandle;
-                    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+                    use windows_sys::Win32::System::Threading::{
+                        OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+                    };
                     unsafe {
                         let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
                         if handle != std::ptr::null_mut() {
@@ -340,9 +449,13 @@ impl ServerProcess {
         match stdin_guard.as_mut() {
             Some(stdin) => {
                 let cmd_str = format!("kick {}\n", name);
-                stdin.write_all(cmd_str.as_bytes()).await
+                stdin
+                    .write_all(cmd_str.as_bytes())
+                    .await
                     .map_err(|e| format!("Stdin-Schreiben fehlgeschlagen: {e}"))?;
-                stdin.flush().await
+                stdin
+                    .flush()
+                    .await
                     .map_err(|e| format!("Stdin-Flush fehlgeschlagen: {e}"))?;
                 Ok(())
             }
