@@ -1,4 +1,4 @@
-use chrono::{Local, TimeZone, Utc};
+use chrono::NaiveDateTime;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -57,7 +57,7 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
         LogPattern {
             regex: Regex::new(r"R5LogGameInstance.*Version\s+=\s+(.+)").unwrap(),
             category: LogCategory::ServerInfo,
-            summary_template: "Server Version: {1}",
+            summary_template: "Server-Version: {1}",
         },
         LogPattern {
             regex: Regex::new(r"^Unreal Engine version:\s+(.+)").unwrap(),
@@ -90,7 +90,7 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
         LogPattern {
             regex: Regex::new(r#""InviteCode":\s*"([^"]+)""#).unwrap(),
             category: LogCategory::ConnectionInfo,
-            summary_template: "Invite Code: {1}",
+            summary_template: "Invite-Code erkannt: {1}",
         },
         // ── Map / world loading ───────────────────────────────────────────────
         // Extract only the filename from the UE path (e.g. /Game/R5/Levels/R5Island_P → R5Island_P)
@@ -144,38 +144,38 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
         LogPattern {
             regex: Regex::new(r"Name '([^']+)'.*\bState 'ReadyToPlay'").unwrap(),
             category: LogCategory::PlayerConnect,
-            summary_template: "Beitritt: {1}",
+            summary_template: "{1} hat sich eingeloggt",
         },
         LogPattern {
             regex: Regex::new(r"Name '([^']+)'.*\bState 'SaidFarewell'").unwrap(),
             category: LogCategory::PlayerDisconnect,
-            summary_template: "Verlassen: {1}",
+            summary_template: "{1} hat den Server verlassen",
         },
         LogPattern {
             regex: Regex::new(r"LogNet:\s+Join succeeded:\s+(.+?)\s*$").unwrap(),
             category: LogCategory::PlayerConnect,
-            summary_template: "Beitritt: {1}",
+            summary_template: "{1} hat sich eingeloggt",
         },
         // Standard UE5 join/logout (fallback for non-R5 servers)
         LogPattern {
             regex: Regex::new(r"LogNet.*Join request.*[?&]Name=([^&\s\]]+)").unwrap(),
             category: LogCategory::PlayerConnect,
-            summary_template: "Beitritt: {1}",
+            summary_template: "{1} hat sich eingeloggt",
         },
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogin:\s+(\S+)").unwrap(),
             category: LogCategory::PlayerConnect,
-            summary_template: "Beitritt: {1}",
+            summary_template: "{1} hat sich eingeloggt",
         },
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogout:\s+(\S+)").unwrap(),
             category: LogCategory::PlayerDisconnect,
-            summary_template: "Verlassen: {1}",
+            summary_template: "{1} hat den Server verlassen",
         },
         LogPattern {
             regex: Regex::new(r"LogNet.*UNetConnection::Close.*RemoteAddr=([^,\s]+)").unwrap(),
             category: LogCategory::PlayerDisconnect,
-            summary_template: "Verbindung getrennt: {1}",
+            summary_template: "Verbindung zu {1} wurde getrennt",
         },
         // ── Version mismatch ─────────────────────────────────────────────────────
         LogPattern {
@@ -221,12 +221,10 @@ static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]\[(\s*\d+)\]").unwrap()
 });
 
-// Parse UE5 timestamp (UTC) and convert to local time for display
+// Keep the UE5 timestamp as logged and display only the clock in the leading column.
 fn convert_timestamp(raw_ts: &str) -> String {
-    // UE5 format: 2026.05.17-16.11.17:016 — treat as UTC, convert to local timezone
-    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(raw_ts, "%Y.%m.%d-%H.%M.%S:%3f") {
-        let utc = Utc.from_utc_datetime(&ndt);
-        return utc.with_timezone(&Local).format("%H:%M:%S").to_string();
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(raw_ts, "%Y.%m.%d-%H.%M.%S:%3f") {
+        return ndt.format("%H:%M:%S").to_string();
     }
     raw_ts.to_string()
 }
@@ -311,13 +309,14 @@ mod tests {
     fn parses_windrose_join_succeeded_as_player_connect() {
         let event = parse_line("[2026.05.18-14.04.37:106][461]LogNet: Join succeeded: TristARRRnX");
         assert_eq!(event.category, LogCategory::PlayerConnect);
-        assert_eq!(event.summary, "Beitritt: TristARRRnX");
+        assert_eq!(event.timestamp.as_deref(), Some("14:04:37"));
+        assert_eq!(event.summary, "TristARRRnX hat sich eingeloggt");
     }
 
     #[test]
     fn parses_r5_said_farewell_as_player_disconnect() {
         let event = parse_line("     1. Name 'TristARRRnX'. AccountId 'abc'. State 'SaidFarewell'. TimeOnServer +00:00:59.963.");
         assert_eq!(event.category, LogCategory::PlayerDisconnect);
-        assert_eq!(event.summary, "Verlassen: TristARRRnX");
+        assert_eq!(event.summary, "TristARRRnX hat den Server verlassen");
     }
 }

@@ -48,6 +48,7 @@ const DEFAULT_HIDDEN: Set<LogCategory> = new Set(["BootNoise", "Unknown"]);
 // Strip known UE5/R5 log prefixes from Unknown/BootNoise lines so the text is readable
 // e.g. "R5LogNet: Warning: Something" → "Something"
 const LOG_PREFIX_RE = /^[A-Za-z0-9_]+:\s*(?:Warning:|Log:|Error:|Display:)?\s*/;
+const RAW_TIMESTAMP_RE = /^\[\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3}\]\[\s*\d+\]/;
 
 // Replace runs of 4+ spaces with a line break — UE5 uses spaces for column alignment,
 // which makes lines very wide. In RAW mode the original is preserved.
@@ -75,7 +76,7 @@ function groupConsecutive(events: LogEvent[]): AggLine[] {
 }
 
 function renderSummary(ev: LogEvent, showRaw: boolean): string {
-  if (showRaw) return ev.raw_line;
+  if (showRaw) return ev.raw_line.replace(RAW_TIMESTAMP_RE, "").trimStart();
   let text = ev.summary;
   if (ev.category === "Unknown" || ev.category === "BootNoise") {
     text = text.replace(LOG_PREFIX_RE, "").trim() || text;

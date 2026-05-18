@@ -90,6 +90,35 @@ fn close_open_player_sessions(world_id: Option<String>, players: &[PlayerInfo], 
     }
 }
 
+fn player_name_from_connect_summary(summary: &str) -> String {
+    if let Some(name) = summary.strip_prefix("Beitritt: ") {
+        return name.trim().to_string();
+    }
+    if let Some(name) = summary.strip_suffix(" hat sich eingeloggt") {
+        return name.trim().to_string();
+    }
+    summary.trim().to_string()
+}
+
+fn player_name_from_disconnect_summary(summary: &str) -> String {
+    if let Some(name) = summary.strip_prefix("Verlassen: ") {
+        return name.trim().to_string();
+    }
+    if let Some(name) = summary.strip_prefix("Verbindung getrennt: ") {
+        return name.trim().to_string();
+    }
+    if let Some(name) = summary.strip_suffix(" hat den Server verlassen") {
+        return name.trim().to_string();
+    }
+    if let Some(name) = summary
+        .strip_prefix("Verbindung zu ")
+        .and_then(|s| s.strip_suffix(" wurde getrennt"))
+    {
+        return name.trim().to_string();
+    }
+    summary.trim().to_string()
+}
+
 fn server_log_dir(server_root: &str) -> PathBuf {
     Path::new(server_root).join("R5").join("Saved").join("Logs")
 }
@@ -134,13 +163,21 @@ async fn process_log_line(
                 dirty = true;
             }
             LogCategory::ConnectionInfo => {
-                if let Some(code) = event.summary.strip_prefix("Invite Code: ") {
+                if let Some(code) = event
+                    .summary
+                    .strip_prefix("Invite-Code erkannt: ")
+                    .or_else(|| event.summary.strip_prefix("Invite Code: "))
+                {
                     state.invite_code = Some(code.to_string());
                     dirty = true;
                 }
             }
             LogCategory::ServerInfo => {
-                if let Some(ver) = event.summary.strip_prefix("Server Version: ") {
+                if let Some(ver) = event
+                    .summary
+                    .strip_prefix("Server-Version: ")
+                    .or_else(|| event.summary.strip_prefix("Server Version: "))
+                {
                     state.version = Some(ver.trim().to_string());
                     dirty = true;
                 }
@@ -150,12 +187,7 @@ async fn process_log_line(
                 dirty = true;
             }
             LogCategory::PlayerConnect => {
-                let name = event
-                    .summary
-                    .strip_prefix("Beitritt: ")
-                    .unwrap_or(&event.summary)
-                    .trim()
-                    .to_string();
+                let name = player_name_from_connect_summary(&event.summary);
                 if !name.is_empty() && !state.players.iter().any(|p| p.name == name) {
                     let joined_at = chrono::Local::now().to_rfc3339();
                     if let Some(world_id) = state.world_id.as_deref() {
@@ -167,13 +199,7 @@ async fn process_log_line(
                 }
             }
             LogCategory::PlayerDisconnect => {
-                let name = event
-                    .summary
-                    .strip_prefix("Verlassen: ")
-                    .or_else(|| event.summary.strip_prefix("Verbindung getrennt: "))
-                    .unwrap_or(&event.summary)
-                    .trim()
-                    .to_string();
+                let name = player_name_from_disconnect_summary(&event.summary);
                 if !name.is_empty() {
                     let player = state.players.iter().find(|p| p.name == name).cloned();
                     if let Some(player) = player {
