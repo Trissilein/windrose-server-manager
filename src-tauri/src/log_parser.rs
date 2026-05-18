@@ -1,4 +1,4 @@
-use chrono::NaiveDateTime;
+use chrono::{Local, NaiveDateTime, TimeZone, Utc};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -221,10 +221,14 @@ static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]\[(\s*\d+)\]").unwrap()
 });
 
-// Keep the UE5 timestamp as logged and display only the clock in the leading column.
+// R5 log timestamps are UTC. Display them as local clock time in the leading column.
 fn convert_timestamp(raw_ts: &str) -> String {
     if let Ok(ndt) = NaiveDateTime::parse_from_str(raw_ts, "%Y.%m.%d-%H.%M.%S:%3f") {
-        return ndt.format("%H:%M:%S").to_string();
+        return Utc
+            .from_utc_datetime(&ndt)
+            .with_timezone(&Local)
+            .format("%H:%M:%S")
+            .to_string();
     }
     raw_ts.to_string()
 }
@@ -308,8 +312,17 @@ mod tests {
     #[test]
     fn parses_windrose_join_succeeded_as_player_connect() {
         let event = parse_line("[2026.05.18-14.04.37:106][461]LogNet: Join succeeded: TristARRRnX");
+        let expected_timestamp = Utc
+            .from_utc_datetime(
+                &NaiveDateTime::parse_from_str("2026.05.18-14.04.37:106", "%Y.%m.%d-%H.%M.%S:%3f")
+                    .unwrap(),
+            )
+            .with_timezone(&Local)
+            .format("%H:%M:%S")
+            .to_string();
+
         assert_eq!(event.category, LogCategory::PlayerConnect);
-        assert_eq!(event.timestamp.as_deref(), Some("14:04:37"));
+        assert_eq!(event.timestamp.as_deref(), Some(expected_timestamp.as_str()));
         assert_eq!(event.summary, "TristARRRnX hat sich eingeloggt");
     }
 
