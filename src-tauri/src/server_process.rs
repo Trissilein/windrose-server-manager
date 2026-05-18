@@ -115,22 +115,27 @@ impl ServerProcess {
 
                 {
                     let mut state = state_clone.lock().await;
+                    let mut dirty = false;
                     match event.category {
                         LogCategory::ServerReady => {
                             state.status = ServerStatus::Running;
+                            dirty = true;
                         }
                         LogCategory::ConnectionInfo => {
                             if let Some(code) = event.summary.strip_prefix("Invite Code: ") {
                                 state.invite_code = Some(code.to_string());
+                                dirty = true;
                             }
                         }
                         LogCategory::ServerInfo => {
                             if let Some(ver) = event.summary.strip_prefix("Server Version: ") {
                                 state.version = Some(ver.trim().to_string());
+                                dirty = true;
                             }
                         }
                         LogCategory::Shutdown => {
                             state.status = ServerStatus::Stopping;
+                            dirty = true;
                         }
                         LogCategory::PlayerConnect => {
                             let name = event.summary
@@ -138,14 +143,13 @@ impl ServerProcess {
                                 .unwrap_or(&event.summary)
                                 .trim()
                                 .to_string();
-                            if !name.is_empty() {
-                                if !state.players.iter().any(|p| p.name == name) {
-                                    state.players.push(PlayerInfo {
-                                        name,
-                                        joined_at: chrono::Local::now().to_rfc3339(),
-                                    });
-                                    state.player_count = Some(state.players.len() as u32);
-                                }
+                            if !name.is_empty() && !state.players.iter().any(|p| p.name == name) {
+                                state.players.push(PlayerInfo {
+                                    name,
+                                    joined_at: chrono::Local::now().to_rfc3339(),
+                                });
+                                state.player_count = Some(state.players.len() as u32);
+                                dirty = true;
                             }
                         }
                         LogCategory::PlayerDisconnect => {
@@ -156,13 +160,19 @@ impl ServerProcess {
                                 .trim()
                                 .to_string();
                             if !name.is_empty() {
+                                let before = state.players.len();
                                 state.players.retain(|p| p.name != name);
-                                state.player_count = Some(state.players.len() as u32);
+                                if state.players.len() != before {
+                                    state.player_count = Some(state.players.len() as u32);
+                                    dirty = true;
+                                }
                             }
                         }
                         _ => {}
                     }
-                    let _ = app_clone.emit("server-status", state.clone());
+                    if dirty {
+                        let _ = app_clone.emit("server-status", state.clone());
+                    }
                 }
                 let _ = app_clone.emit("log-event", &event);
             }

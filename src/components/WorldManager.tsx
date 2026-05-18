@@ -15,6 +15,10 @@ function formatBytes(b: number | null | undefined): string {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function worldLabel(w: WorldInfo | { alias: string | null; island_id: string }, maxLen = 12): string {
+  return w.alias ?? w.island_id.slice(0, maxLen) + "…";
+}
+
 function formatDate(ts: number): string {
   if (!ts) return "–";
   return new Date(ts * 1000).toLocaleDateString("de-DE", {
@@ -32,7 +36,7 @@ function JsonViewerModal({
   let formatted = json;
   try { formatted = JSON.stringify(JSON.parse(json), null, 2); } catch {}
 
-  const displayName = world.alias ?? world.island_id.slice(0, 12) + "…";
+  const displayName = worldLabel(world);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -117,7 +121,7 @@ export default function WorldManager({ config, onAliasChange }: Props) {
     if (serverRunning) { setError("Server muss gestoppt sein zum Aktivieren."); return; }
     try {
       await api.activateWorld(config.server_path, world.island_id);
-      flash(`Welt aktiviert: ${world.alias ?? world.island_id.slice(0, 12)}`);
+      flash(`Welt aktiviert: ${worldLabel(world)}`);
       await load();
     } catch (e) {
       setError(String(e));
@@ -127,7 +131,7 @@ export default function WorldManager({ config, onAliasChange }: Props) {
   async function handleArchive(world: WorldInfo) {
     if (serverRunning) { setError("Server muss gestoppt sein zum Archivieren."); return; }
     if (world.is_active) { setError("Die aktive Welt kann nicht archiviert werden."); return; }
-    if (!confirm(`Welt "${world.alias ?? world.island_id.slice(0, 12)}" archivieren? Sie kann später wieder aktiviert werden.`)) return;
+    if (!confirm(`Welt "${worldLabel(world)}" archivieren? Sie kann später wieder aktiviert werden.`)) return;
     try {
       await api.archiveWorld(config.server_path, world.island_id);
       flash("Welt archiviert");
@@ -140,7 +144,7 @@ export default function WorldManager({ config, onAliasChange }: Props) {
   async function handleUnarchive(world: WorldInfo) {
     try {
       await api.unarchiveWorld(config.server_path, world.island_id);
-      flash(`Welt wiederhergestellt: ${world.alias ?? world.island_id.slice(0, 12)}`);
+      flash(`Welt wiederhergestellt: ${worldLabel(world)}`);
       await load();
     } catch (e) {
       setError(String(e));
@@ -150,7 +154,7 @@ export default function WorldManager({ config, onAliasChange }: Props) {
   async function handleDelete(world: WorldInfo) {
     if (serverRunning && !world.is_archived) { setError("Server muss gestoppt sein zum Löschen."); return; }
     if (world.is_active) { setError("Die aktive Welt kann nicht gelöscht werden."); return; }
-    const label = world.alias ?? world.island_id.slice(0, 12);
+    const label = worldLabel(world);
     if (!confirm(`Welt "${label}" endgültig löschen? Diese Aktion kann nicht rückgängig gemacht werden!`)) return;
     try {
       await api.deleteWorld(config.server_path, world.island_id, world.is_archived);
@@ -215,7 +219,7 @@ export default function WorldManager({ config, onAliasChange }: Props) {
   }
 
   async function handleExport(world: WorldInfo) {
-    const defaultName = `${world.alias ?? world.island_id.slice(0, 12)}_${new Date().toISOString().slice(0, 10)}.zip`;
+    const defaultName = `${worldLabel(world)}_${new Date().toLocaleDateString("sv-SE")}.zip`;
     const dest = await save({
       title: "Welt exportieren",
       defaultPath: defaultName,
@@ -402,7 +406,7 @@ export default function WorldManager({ config, onAliasChange }: Props) {
                   <tr key={w.island_id}>
                     <td>
                       <span className="muted" title={w.island_id}>
-                        {w.alias || w.island_id.slice(0, 8) + "…"}
+                        {worldLabel(w, 8)}
                       </span>
                     </td>
                     <td>{w.world_name}</td>
@@ -450,7 +454,7 @@ export default function WorldManager({ config, onAliasChange }: Props) {
       {backupView && (
         <div className="modal-overlay" onClick={() => setBackupView(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Backups — {backupView.alias ?? backupView.worldId.slice(0, 12)}</h3>
+            <h3>Backups — {worldLabel({ alias: backupView.alias, island_id: backupView.worldId })}</h3>
             {backupView.backups.length === 0 ? (
               <p className="empty-hint">Keine Backups vorhanden.</p>
             ) : (

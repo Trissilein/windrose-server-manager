@@ -89,25 +89,12 @@ fn list_backups(backup_root: String, world_id_or_alias: String) -> Result<Vec<Ba
         let path = entry.path();
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-            let size = world_manager_dir_size(&path).ok();
+            let size = world_manager::dir_size(&path).ok();
             backups.push(BackupInfo { world_id: world_id_or_alias.clone(), path: path.display().to_string(), timestamp: name, size_bytes: size.unwrap_or(0) });
         }
     }
     backups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     Ok(backups)
-}
-
-fn world_manager_dir_size(path: &std::path::Path) -> Result<u64, std::io::Error> {
-    let mut total = 0u64;
-    for entry in std::fs::read_dir(path)?.flatten() {
-        let p = entry.path();
-        if p.is_file() {
-            total += entry.metadata()?.len();
-        } else if p.is_dir() {
-            total += world_manager_dir_size(&p)?;
-        }
-    }
-    Ok(total)
 }
 
 // ── Server-Process ────────────────────────────────────────────────────────────

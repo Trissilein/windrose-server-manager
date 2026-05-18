@@ -148,7 +148,7 @@ export default function LogViewer({ events }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "instant" });
   }, [events, autoScroll]);
 
   function toggleCat(cat: LogCategory) {
