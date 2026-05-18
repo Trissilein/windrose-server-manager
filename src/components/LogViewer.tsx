@@ -145,8 +145,10 @@ export default function LogViewer({ events }: Props) {
   const [showRaw, setShowRaw] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [aggregate, setAggregate] = useState(true);
+  const [search, setSearch] = useState("");
   const [hiddenCats, setHiddenCats] = useState<Set<LogCategory>>(new Set(DEFAULT_HIDDEN));
   const bottomRef = useRef<HTMLDivElement>(null);
+  const searchNeedle = search.trim().toLowerCase();
 
   useEffect(() => {
     if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "instant" });
@@ -172,8 +174,19 @@ export default function LogViewer({ events }: Props) {
   }, [events]);
 
   const visible = useMemo(
-    () => events.filter((e) => !hiddenCats.has(e.category)),
-    [events, hiddenCats]
+    () => events.filter((e) => {
+      if (hiddenCats.has(e.category)) return false;
+      if (!searchNeedle) return true;
+      const searchable = [
+        e.summary,
+        e.raw_line,
+        e.timestamp ?? "",
+        CAT_META[e.category].label,
+        e.category,
+      ].join("\n").toLowerCase();
+      return searchable.includes(searchNeedle);
+    }),
+    [events, hiddenCats, searchNeedle]
   );
 
   const aggregated = useMemo<AggLine[]>(
@@ -196,6 +209,19 @@ export default function LogViewer({ events }: Props) {
           ))}
         </div>
         <div className="log-controls">
+          <input
+            className="log-search"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Logs suchen..."
+            title="Summary, Raw-Zeile, Zeit oder Kategorie suchen"
+          />
+          {search && (
+            <button className="btn btn-small" onClick={() => setSearch("")} title="Suche löschen">
+              ×
+            </button>
+          )}
           <button className="btn btn-small" onClick={showAll} title="Alle einblenden">Alle</button>
           <button className="btn btn-small" onClick={hideAll} title="Alle ausblenden">Keine</button>
           <span style={{ fontSize: 11, color: "var(--muted)" }}>
@@ -221,7 +247,9 @@ export default function LogViewer({ events }: Props) {
           <div className="empty-hint" style={{ paddingTop: 40 }}>
             {events.length === 0
               ? "Warte auf Server-Logs…"
-              : "Keine Einträge für die aktiven Filter"}
+              : search
+                ? "Keine Einträge für Suche und aktive Filter"
+                : "Keine Einträge für die aktiven Filter"}
           </div>
         )}
         {aggregated.map(({ event: ev, count }, i) => {

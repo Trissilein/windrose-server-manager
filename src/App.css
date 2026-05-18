@@ -351,6 +351,19 @@ html, body, #root {
 .chip-off { background: var(--surface); color: var(--muted); }
 
 .log-controls { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.log-search {
+  width: 180px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--text);
+  font-size: 12px;
+}
+.log-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .toggle-label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
 .toggle-label input { accent-color: var(--accent); }
 
