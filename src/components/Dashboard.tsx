@@ -306,7 +306,7 @@ export default function Dashboard({ config, onNavigate }: Props) {
   async function handleKick(player: PlayerInfo) {
     setKickingPlayer(player.name);
     try {
-      await api.kickPlayer(player.name);
+      await api.kickPlayer(player.name, player.client_login_name);
     } catch (e) {
       setError(`Kick fehlgeschlagen: ${String(e)}`);
     } finally {
@@ -561,7 +561,9 @@ export default function Dashboard({ config, onNavigate }: Props) {
                   background: "var(--surface2)", fontSize: 13,
                 }}>
                   <div>
-                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {p.client_name ? `${p.name} von ${p.client_name}` : p.name}
+                    </div>
                     <div style={{ color: "var(--muted)", fontSize: 11 }}>
                       seit {formatJoinTime(p.joined_at)} · {formatSessionDuration(p.joined_at)}
                     </div>
@@ -601,6 +603,10 @@ export default function Dashboard({ config, onNavigate }: Props) {
                   <div className="player-history-main">
                     <span className="player-history-name">{entry.name}</span>
                     {online && <span className="badge badge-active">Online</span>}
+                  </div>
+                  <div className="player-history-stat">
+                    <span>Gerät</span>
+                    <strong>{entry.last_client_name ?? "–"}</strong>
                   </div>
                   <div className="player-history-stat">
                     <span>Letzte Session</span>

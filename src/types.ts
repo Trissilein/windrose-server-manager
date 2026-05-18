@@ -6,6 +6,8 @@ export type ServerStatus = "Stopped" | "Starting" | "Running" | "Stopping";
 export interface PlayerInfo {
   name: string;
   joined_at: string;
+  client_name: string | null;
+  client_login_name: string | null;
 }
 
 export interface PlayerHistoryEntry {
@@ -16,6 +18,7 @@ export interface PlayerHistoryEntry {
   last_session_ended_at: string | null;
   total_play_seconds: number;
   connect_count: number;
+  last_client_name: string | null;
 }
 
 export interface WorldLaunchOption {

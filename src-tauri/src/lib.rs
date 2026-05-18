@@ -155,9 +155,14 @@ async fn stop_server(
 #[tauri::command]
 async fn kick_player(
     name: String,
+    client_login_name: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ServerProcess>>>,
 ) -> Result<(), String> {
-    state.lock().await.kick_player(&name).await
+    state
+        .lock()
+        .await
+        .kick_player(&name, client_login_name.as_deref())
+        .await
 }
 
 // ── Server Update (SteamCMD) ──────────────────────────────────────────────────

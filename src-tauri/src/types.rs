@@ -144,6 +144,10 @@ pub enum ServerStatus {
 pub struct PlayerInfo {
     pub name: String,
     pub joined_at: String,
+    #[serde(default)]
+    pub client_name: Option<String>,
+    #[serde(default)]
+    pub client_login_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +159,8 @@ pub struct PlayerHistoryEntry {
     pub last_session_ended_at: Option<String>,
     pub total_play_seconds: u64,
     pub connect_count: u32,
+    #[serde(default)]
+    pub last_client_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

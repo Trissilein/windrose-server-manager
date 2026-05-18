@@ -14,6 +14,13 @@ use crate::types::{
 };
 use crate::{app_config, log_parser, noise_learner};
 
+#[derive(Debug, Clone)]
+struct JoinRequestHint {
+    raw_name: String,
+    client_name: String,
+    seen_at: Instant,
+}
+
 fn session_seconds(started_at: &str, ended_at: &str) -> u64 {
     let started = chrono::DateTime::parse_from_rfc3339(started_at);
     let ended = chrono::DateTime::parse_from_rfc3339(ended_at);
@@ -25,7 +32,12 @@ fn session_seconds(started_at: &str, ended_at: &str) -> u64 {
     }
 }
 
-fn record_player_connect(world_id: &str, name: &str, connected_at: &str) {
+fn record_player_connect(
+    world_id: &str,
+    name: &str,
+    connected_at: &str,
+    client_name: Option<&str>,
+) {
     if world_id.trim().is_empty() || name.trim().is_empty() {
         return;
     }
@@ -42,12 +54,14 @@ fn record_player_connect(world_id: &str, name: &str, connected_at: &str) {
             last_session_ended_at: None,
             total_play_seconds: 0,
             connect_count: 0,
+            last_client_name: client_name.map(|value| value.to_string()),
         });
 
     entry.last_seen_at = connected_at.to_string();
     entry.last_session_started_at = connected_at.to_string();
     entry.last_session_ended_at = None;
     entry.connect_count = entry.connect_count.saturating_add(1);
+    entry.last_client_name = client_name.map(|value| value.to_string());
 
     let _ = app_config::save(&cfg);
 }
@@ -69,6 +83,7 @@ fn record_player_disconnect(world_id: &str, player: &PlayerInfo, disconnected_at
             last_session_ended_at: None,
             total_play_seconds: 0,
             connect_count: 1,
+            last_client_name: player.client_name.clone(),
         });
 
     entry.last_seen_at = disconnected_at.to_string();
@@ -77,6 +92,7 @@ fn record_player_disconnect(world_id: &str, player: &PlayerInfo, disconnected_at
     entry.total_play_seconds = entry
         .total_play_seconds
         .saturating_add(session_seconds(&player.joined_at, disconnected_at));
+    entry.last_client_name = player.client_name.clone();
 
     let _ = app_config::save(&cfg);
 }
@@ -119,6 +135,38 @@ fn player_name_from_disconnect_summary(summary: &str) -> String {
     summary.trim().to_string()
 }
 
+fn client_name_from_join_request(raw_name: &str) -> String {
+    static MACHINE_SUFFIX_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)-[0-9a-f]{32}$").unwrap());
+
+    MACHINE_SUFFIX_RE.replace(raw_name.trim(), "").to_string()
+}
+
+fn push_join_request_hint(pending: &mut Vec<JoinRequestHint>, raw_name: String) {
+    let now = Instant::now();
+    pending.retain(|hint| now.duration_since(hint.seen_at) <= Duration::from_secs(60));
+
+    if pending.iter().any(|hint| hint.raw_name == raw_name) {
+        return;
+    }
+
+    pending.push(JoinRequestHint {
+        client_name: client_name_from_join_request(&raw_name),
+        raw_name,
+        seen_at: now,
+    });
+}
+
+fn pop_join_request_hint(pending: &mut Vec<JoinRequestHint>) -> Option<JoinRequestHint> {
+    let now = Instant::now();
+    pending.retain(|hint| now.duration_since(hint.seen_at) <= Duration::from_secs(60));
+    if pending.is_empty() {
+        None
+    } else {
+        Some(pending.remove(0))
+    }
+}
+
 fn server_log_dir(server_root: &str) -> PathBuf {
     Path::new(server_root).join("R5").join("Saved").join("Logs")
 }
@@ -142,10 +190,16 @@ fn newest_log_file(log_dir: &Path) -> Option<PathBuf> {
 async fn process_log_line(
     line: &str,
     state_clone: &Arc<Mutex<ServerState>>,
+    pending_join_requests: &Arc<Mutex<Vec<JoinRequestHint>>>,
     app_clone: &AppHandle,
     noise_learner: &mut noise_learner::NoiseLearner,
 ) {
     let mut event = log_parser::parse_line(line);
+
+    if let Some(raw_name) = log_parser::join_request_name(line) {
+        let mut pending = pending_join_requests.lock().await;
+        push_join_request_hint(&mut pending, raw_name);
+    }
 
     if matches!(event.category, LogCategory::Unknown | LogCategory::Warning) {
         let content = log_parser::content_of(line);
@@ -189,11 +243,27 @@ async fn process_log_line(
             LogCategory::PlayerConnect => {
                 let name = player_name_from_connect_summary(&event.summary);
                 if !name.is_empty() && !state.players.iter().any(|p| p.name == name) {
+                    let join_hint = {
+                        let mut pending = pending_join_requests.lock().await;
+                        pop_join_request_hint(&mut pending)
+                    };
                     let joined_at = chrono::Local::now().to_rfc3339();
-                    if let Some(world_id) = state.world_id.as_deref() {
-                        record_player_connect(world_id, &name, &joined_at);
+                    let client_name = join_hint.as_ref().map(|hint| hint.client_name.clone());
+                    let client_login_name = join_hint.as_ref().map(|hint| hint.raw_name.clone());
+
+                    if let Some(client_name) = client_name.as_deref() {
+                        event.summary = format!("{name} von {client_name} hat sich eingeloggt");
                     }
-                    state.players.push(PlayerInfo { name, joined_at });
+
+                    if let Some(world_id) = state.world_id.as_deref() {
+                        record_player_connect(world_id, &name, &joined_at, client_name.as_deref());
+                    }
+                    state.players.push(PlayerInfo {
+                        name,
+                        joined_at,
+                        client_name,
+                        client_login_name,
+                    });
                     state.player_count = Some(state.players.len() as u32);
                     dirty = true;
                 }
@@ -231,6 +301,7 @@ async fn process_log_line(
 async fn tail_server_log(
     log_dir: PathBuf,
     state_clone: Arc<Mutex<ServerState>>,
+    pending_join_requests: Arc<Mutex<Vec<JoinRequestHint>>>,
     app_clone: AppHandle,
     learned_noise: Vec<LearnedNoiseEntry>,
     started_at: SystemTime,
@@ -267,6 +338,7 @@ async fn tail_server_log(
                                 process_log_line(
                                     line,
                                     &state_clone,
+                                    &pending_join_requests,
                                     &app_clone,
                                     &mut noise_learner,
                                 )
@@ -299,6 +371,7 @@ pub struct ServerProcess {
     pub state: Arc<Mutex<ServerState>>,
     child_pid: Arc<Mutex<Option<u32>>>,
     child_stdin: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
+    pending_join_requests: Arc<Mutex<Vec<JoinRequestHint>>>,
 }
 
 impl ServerProcess {
@@ -307,6 +380,7 @@ impl ServerProcess {
             state: Arc::new(Mutex::new(ServerState::default())),
             child_pid: Arc::new(Mutex::new(None)),
             child_stdin: Arc::new(Mutex::new(None)),
+            pending_join_requests: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -407,11 +481,14 @@ impl ServerProcess {
         let stdin_clone = self.child_stdin.clone();
         let app_clone = app.clone();
         let log_state = self.state.clone();
+        let log_join_requests = self.pending_join_requests.clone();
+        let cleanup_join_requests = self.pending_join_requests.clone();
         let log_app = app.clone();
         let log_dir = server_log_dir(server_root);
         tokio::spawn(tail_server_log(
             log_dir,
             log_state,
+            log_join_requests,
             log_app,
             learned_noise,
             log_started_at,
@@ -438,6 +515,7 @@ impl ServerProcess {
             }
             *pid_clone.lock().await = None;
             *stdin_clone.lock().await = None;
+            cleanup_join_requests.lock().await.clear();
         });
 
         // CPU/RAM metrics polling task
@@ -560,15 +638,38 @@ impl ServerProcess {
         Ok(())
     }
 
-    pub async fn kick_player(&self, name: &str) -> Result<(), String> {
+    pub async fn kick_player(&self, name: &str, client_login_name: Option<&str>) -> Result<(), String> {
         let mut stdin_guard = self.child_stdin.lock().await;
         match stdin_guard.as_mut() {
             Some(stdin) => {
-                let cmd_str = format!("kick {}\n", name);
-                stdin
-                    .write_all(cmd_str.as_bytes())
-                    .await
-                    .map_err(|e| format!("Stdin-Schreiben fehlgeschlagen: {e}"))?;
+                let mut candidates = Vec::new();
+                if let Some(client_login_name) = client_login_name {
+                    let target = client_login_name.trim();
+                    if !target.is_empty() {
+                        candidates.push(target.to_string());
+                    }
+                }
+                let account_name = name.trim();
+                if !account_name.is_empty() && !candidates.iter().any(|value| value == account_name) {
+                    candidates.push(account_name.to_string());
+                }
+
+                if candidates.is_empty() {
+                    return Err("Kein Kick-Ziel vorhanden".to_string());
+                }
+
+                for target in candidates {
+                    let formatted_target = if target.contains(' ') {
+                        format!("\"{target}\"")
+                    } else {
+                        target
+                    };
+                    let cmd_str = format!("kick {formatted_target}\r\n");
+                    stdin
+                        .write_all(cmd_str.as_bytes())
+                        .await
+                        .map_err(|e| format!("Stdin-Schreiben fehlgeschlagen: {e}"))?;
+                }
                 stdin
                     .flush()
                     .await

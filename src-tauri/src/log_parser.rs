@@ -12,9 +12,20 @@ struct LogPattern {
 
 // Strips [000000]-style inline frame numbers that R5LogNet embeds in message bodies
 static INLINE_FRAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\d{4,6}\]\s*").unwrap());
+static JOIN_REQUEST_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"LogNet.*Join request.*[?&]Name=([^?&\s\]]+)").unwrap()
+});
 
 fn strip_inline_frames(s: &str) -> String {
     INLINE_FRAME_RE.replace_all(s, "").trim().to_string()
+}
+
+pub fn join_request_name(raw: &str) -> Option<String> {
+    let content = content_of(raw);
+    JOIN_REQUEST_NAME_RE
+        .captures(content)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().trim().to_string())
 }
 
 static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
@@ -158,9 +169,9 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
         },
         // Standard UE5 join/logout (fallback for non-R5 servers)
         LogPattern {
-            regex: Regex::new(r"LogNet.*Join request.*[?&]Name=([^&\s\]]+)").unwrap(),
-            category: LogCategory::PlayerConnect,
-            summary_template: "{1} hat sich eingeloggt",
+            regex: JOIN_REQUEST_NAME_RE.clone(),
+            category: LogCategory::BootNoise,
+            summary_template: "",
         },
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogin:\s+(\S+)").unwrap(),
@@ -331,5 +342,16 @@ mod tests {
         let event = parse_line("     1. Name 'TristARRRnX'. AccountId 'abc'. State 'SaidFarewell'. TimeOnServer +00:00:59.963.");
         assert_eq!(event.category, LogCategory::PlayerDisconnect);
         assert_eq!(event.summary, "TristARRRnX hat den Server verlassen");
+    }
+
+    #[test]
+    fn treats_join_request_machine_name_as_hidden_noise() {
+        let event = parse_line("[2026.05.18-15.09.05:000][123]LogNet: Join request: /Game/Maps/Lobby/R5ServerLobby?BLPlayerSessionId=fbf28123198044779a6519036118465c?Name=Tris9800X3D-C2DD44FD4D92E014EA76F4B00E0C99AC?SplitscreenCount=1");
+        assert_eq!(event.category, LogCategory::BootNoise);
+        assert!(event.summary.contains("Join request"));
+        assert_eq!(
+            join_request_name(&event.raw_line).as_deref(),
+            Some("Tris9800X3D-C2DD44FD4D92E014EA76F4B00E0C99AC")
+        );
     }
 }
