@@ -58,6 +58,7 @@ export type LogCategory =
   | "Auth"
   | "Registration"
   | "Shutdown"
+  | "R5Check"
   | "PlayerConnect"
   | "PlayerDisconnect"
   | "Error"

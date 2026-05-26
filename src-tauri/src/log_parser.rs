@@ -148,14 +148,65 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::BackupDone,
             summary_template: "Backup abgeschlossen",
         },
+        // ── R5 checks / asserts / consistency failures ──────────────────────
+        LogPattern {
+            regex: Regex::new(r"(?i)^R5LogCheck:\s+Error:\s*\[-1:(\d+)\]").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "R5Check Fehler #{1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"(?i)^R5LogCheck:\s+Warning:\s*\[-1:(\d+)\]").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "R5Check Warnung #{1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"(?i)^R5LogBLBusinessRule:\s+Error:.*Condition '([^']+)' failed").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Bedingung fehlgeschlagen: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*!!! R5Check happens !!!").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "R5Check ausgelöst",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*!!! R5NoEntry happens !!!").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "R5NoEntry ausgelöst",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*Condition:\s*'?(.*?)'?$").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Bedingung: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*Where:\s*(.+)$").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Ort: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*Message:\s*(.+)$").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Meldung: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^LogOutputDevice:\s+(Error|Warning):\s+=== FR5CheckDetails::PrintCallstackToLog ===").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Callstack folgt",
+        },
+        LogPattern {
+            regex: Regex::new(r"^LogOutputDevice:\s+(Error|Warning):\s+\[Callstack\]\s+(.+)$").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Callstack: {2}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^LogOutputDevice:\s+(Error|Warning):\s*$").unwrap(),
+            category: LogCategory::BootNoise,
+            summary_template: "",
+        },
         // ── CheckMonitor health summary (periodic report, not error events) ────
         LogPattern {
             regex: Regex::new(r"^R5(Error|Check|Ensure) Report Calls TotalNum").unwrap(),
-            category: LogCategory::Warning,
-            summary_template: "",
-        },
-        LogPattern {
-            regex: Regex::new(r"^R5LogCheck: Warning:").unwrap(),
             category: LogCategory::Warning,
             summary_template: "",
         },
@@ -269,6 +320,28 @@ pub fn content_of(raw: &str) -> &str {
     }
 }
 
+fn level_for_pattern(category: &LogCategory, content: &str) -> LogLevel {
+    match category {
+        LogCategory::ConnectionFailure | LogCategory::Error | LogCategory::VersionMismatch => {
+            LogLevel::Error
+        }
+        LogCategory::Performance | LogCategory::Warning => LogLevel::Warning,
+        LogCategory::R5Check => {
+            if content.contains("Warning:") {
+                LogLevel::Warning
+            } else if content.contains("Error:")
+                || content.contains("failed")
+                || content.contains("NoEntry")
+            {
+                LogLevel::Error
+            } else {
+                LogLevel::Info
+            }
+        }
+        _ => LogLevel::Info,
+    }
+}
+
 pub fn parse_line(raw: &str) -> LogEvent {
     let (timestamp, frame, content) = if let Some(caps) = TIMESTAMP_RE.captures(raw) {
         let ts = caps.get(1).map(|m| convert_timestamp(m.as_str()));
@@ -297,7 +370,7 @@ pub fn parse_line(raw: &str) -> LogEvent {
                 timestamp,
                 frame,
                 category: pattern.category.clone(),
-                level: LogLevel::Info,
+                level: level_for_pattern(&pattern.category, content),
                 summary,
                 raw_line: raw.to_string(),
             };
@@ -376,5 +449,21 @@ mod tests {
         let event = parse_line("[2026.05.26-04.03.12:123][ 42]LogNet: Warning: UNetConnection::Tick: Connection TIMED OUT. Closing connection.");
         assert_eq!(event.category, LogCategory::ConnectionFailure);
         assert_eq!(event.summary, "Verbindung zum Server verloren");
+    }
+
+    #[test]
+    fn parses_r5_check_error_block_as_r5check() {
+        let event = parse_line("[2026.04.17-00.48.09:547][959]R5LogCheck: Error: [-1:417385]");
+        assert_eq!(event.category, LogCategory::R5Check);
+        assert_eq!(event.level, LogLevel::Error);
+        assert!(event.summary.contains("417385"));
+    }
+
+    #[test]
+    fn parses_r5_business_rule_condition_as_r5check() {
+        let event = parse_line("[2026.04.17-00.48.09:541][959]R5LogBLBusinessRule: Error: [002959] TR5BLBusinessRule<>::DoForServer 'R5BLPlayer_ValidateData' rule Do() exception: Condition 'RewardLevel < CurrentLevel' failed. [R5BLEntityProgressionCntr::ValidateProgression](D:\\Source\\Build\\work\\gameRepoCheckoutDir\\Plugins\\R5BusinessRules\\Source\\R5BusinessRules\\Cpp\\R5Rules\\Player\\EntityProgression\\R5BLEntityProgressionController.r5bl.cpp:229).");
+        assert_eq!(event.category, LogCategory::R5Check);
+        assert_eq!(event.level, LogLevel::Error);
+        assert_eq!(event.summary, "Bedingung fehlgeschlagen: RewardLevel < CurrentLevel");
     }
 }
