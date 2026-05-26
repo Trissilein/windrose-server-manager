@@ -22,7 +22,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                     let _ = win.set_focus();
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => crate::begin_graceful_shutdown(app.clone()),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

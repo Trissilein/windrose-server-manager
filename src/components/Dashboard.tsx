@@ -747,11 +747,11 @@ export default function Dashboard({ config, onNavigate, onConfigChange }: Props)
         </div>
       )}
 
-      {/* ── 3-Spalten-Panels ── */}
+      {/* ── 2-Spalten-Layout ── */}
       <div className="dash-panels">
 
         {/* Server-Info */}
-        <div className="dash-panel">
+        <div className="dash-panel dash-panel-server">
           <div className="dash-panel-title">Server-Info</div>
 
           <div className="info-row">
@@ -812,7 +812,7 @@ export default function Dashboard({ config, onNavigate, onConfigChange }: Props)
         </div>
 
         {/* Metriken */}
-        <div className="dash-panel">
+        <div className="dash-panel dash-panel-resources">
           <div className="dash-panel-title">Ressourcen</div>
 
           <div style={{ marginBottom: 16 }}>
@@ -840,7 +840,7 @@ export default function Dashboard({ config, onNavigate, onConfigChange }: Props)
         </div>
 
         {/* Player */}
-        <div className="dash-panel player-panel">
+        <div className="dash-panel player-panel dash-panel-player">
           <div className="dash-panel-title" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
             <span>Player</span>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

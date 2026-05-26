@@ -33,6 +33,10 @@ struct LaunchContext {
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
 const HEALTH_SIGNAL_STALE_AFTER_SECS: u64 = 45;
 const HEALTH_MISS_THRESHOLD: u32 = 2;
+const STARTUP_READY_FALLBACK_SECS: u64 = 60;
+const SHUTDOWN_GRACE_SECS: u64 = 12;
+const SHUTDOWN_FORCE_WAIT_SECS: u64 = 3;
+const SHUTDOWN_POLL_INTERVAL_MS: u64 = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
@@ -309,12 +313,32 @@ async fn process_log_line(
         let mut dirty = false;
         match event.category {
             LogCategory::ServerReady => {
-                state.status = ServerStatus::Running;
-                dirty = true;
+                if state.status == ServerStatus::Starting {
+                    state.status = ServerStatus::Running;
+                    dirty = true;
+                }
                 recovery_signal = Some("ServerReady");
             }
             LogCategory::RegionPing => {
+                if state.status == ServerStatus::Starting {
+                    state.status = ServerStatus::Running;
+                    dirty = true;
+                }
                 recovery_signal = Some("RegionPing");
+            }
+            LogCategory::Auth => {
+                if state.status == ServerStatus::Starting {
+                    state.status = ServerStatus::Running;
+                    dirty = true;
+                }
+                recovery_signal = Some("Auth");
+            }
+            LogCategory::Registration => {
+                if state.status == ServerStatus::Starting {
+                    state.status = ServerStatus::Running;
+                    dirty = true;
+                }
+                recovery_signal = Some("Registration");
             }
             LogCategory::ConnectionInfo => {
                 if let Some(code) = event
@@ -325,6 +349,11 @@ async fn process_log_line(
                     state.invite_code = Some(code.to_string());
                     dirty = true;
                 }
+                if state.status == ServerStatus::Starting {
+                    state.status = ServerStatus::Running;
+                    dirty = true;
+                }
+                recovery_signal = Some("ConnectionInfo");
             }
             LogCategory::ServerInfo => {
                 if let Some(ver) = event
@@ -724,7 +753,7 @@ impl ServerProcess {
         {
             #[allow(unused_imports)]
             use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x00000200 | 0x00008000);
+            cmd.creation_flags(0x08000000 | 0x00000200);
         }
 
         let log_started_at = SystemTime::now();
@@ -909,12 +938,12 @@ impl ServerProcess {
             }
         });
 
-        // Fallback: if process is still alive after 90s but status is still "Starting",
-        // the ServerReady pattern didn't match — assume running anyway
+        // Fallback: if the process is still alive after the startup grace window but
+        // no ready signal matched, assume it has reached a usable state.
         let fallback_state = self.state.clone();
         let fallback_app = app.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(90)).await;
+            tokio::time::sleep(Duration::from_secs(STARTUP_READY_FALLBACK_SECS)).await;
             let players_online = {
                 let mut state = fallback_state.lock().await;
                 if state.status != ServerStatus::Starting {
@@ -960,6 +989,14 @@ impl ServerProcess {
         .await
     }
 
+    async fn request_graceful_shutdown(&self) {
+        let mut stdin_guard = self.child_stdin.lock().await;
+        if let Some(mut stdin) = stdin_guard.take() {
+            let _ = stdin.write_all(b"quit\r\n").await;
+            let _ = stdin.flush().await;
+        }
+    }
+
     pub async fn stop(&self, app: AppHandle) -> Result<(), String> {
         let pid = {
             let stored = self.child_pid.lock().await;
@@ -980,6 +1017,8 @@ impl ServerProcess {
         }
         self.recovery_in_progress.store(false, Ordering::SeqCst);
 
+        self.request_graceful_shutdown().await;
+
         #[cfg(target_os = "windows")]
         {
             use windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent;
@@ -988,12 +1027,14 @@ impl ServerProcess {
             }
         }
 
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + Duration::from_secs(SHUTDOWN_GRACE_SECS);
+        let force_deadline = deadline + Duration::from_secs(SHUTDOWN_FORCE_WAIT_SECS);
+        let mut forced_termination = false;
         loop {
             if self.child_pid.lock().await.is_none() {
                 break;
             }
-            if Instant::now() > deadline {
+            if !forced_termination && Instant::now() > deadline {
                 #[cfg(target_os = "windows")]
                 {
                     use windows_sys::Win32::Foundation::CloseHandle;
@@ -1008,9 +1049,12 @@ impl ServerProcess {
                         }
                     }
                 }
+                forced_termination = true;
+            }
+            if forced_termination && Instant::now() > force_deadline {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(SHUTDOWN_POLL_INTERVAL_MS)).await;
         }
 
         Ok(())

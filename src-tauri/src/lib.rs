@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use server_process::ServerProcess;
 use types::{AppConfig, BackupInfo, LearnedNoiseEntry, ServerStartInfo, WorldInfo, WorldLaunchOption};
 
-fn begin_graceful_shutdown(app: AppHandle) {
+pub(crate) fn begin_graceful_shutdown(app: AppHandle) {
     let shutdown_in_progress = app.state::<Arc<AtomicBool>>().inner().clone();
     if shutdown_in_progress.swap(true, Ordering::SeqCst) {
         return;
