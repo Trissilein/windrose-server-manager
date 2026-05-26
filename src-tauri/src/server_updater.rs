@@ -49,6 +49,13 @@ pub async fn run_update(steamcmd_path: &str, server_root: &str, app: &AppHandle)
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    #[cfg(target_os = "windows")]
+    {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+
     let mut child = cmd.spawn()
         .map_err(|e| format!("SteamCMD konnte nicht gestartet werden: {e}"))?;
 

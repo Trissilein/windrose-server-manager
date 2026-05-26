@@ -1,4 +1,4 @@
-use chrono::{TimeZone, Utc, Local};
+use chrono::{Local, NaiveDateTime, TimeZone, Utc};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -11,16 +11,41 @@ struct LogPattern {
 }
 
 // Strips [000000]-style inline frame numbers that R5LogNet embeds in message bodies
-static INLINE_FRAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[\d{4,6}\]\s*").unwrap()
+static INLINE_FRAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\d{4,6}\]\s*").unwrap());
+static JOIN_REQUEST_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"LogNet.*Join request.*[?&]Name=([^?&\s\]]+)").unwrap()
 });
 
 fn strip_inline_frames(s: &str) -> String {
     INLINE_FRAME_RE.replace_all(s, "").trim().to_string()
 }
 
+pub fn join_request_name(raw: &str) -> Option<String> {
+    let content = content_of(raw);
+    JOIN_REQUEST_NAME_RE
+        .captures(content)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().trim().to_string())
+}
+
 static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
     vec![
+        // ── Connection recovery / loss ───────────────────────────────────────
+        LogPattern {
+            regex: Regex::new(r"(?i)^R5LogNet:.*(connection (lost|timed out|reset)|socket error|network failure|disconnect|failed to connect)").unwrap(),
+            category: LogCategory::ConnectionFailure,
+            summary_template: "Verbindungsproblem erkannt",
+        },
+        LogPattern {
+            regex: Regex::new(r"(?i)^LogNet:.*UNetConnection::Tick: Connection TIMED OUT").unwrap(),
+            category: LogCategory::ConnectionFailure,
+            summary_template: "Verbindung zum Server verloren",
+        },
+        LogPattern {
+            regex: Regex::new(r"(?i)^LogOnline:.*(connection.*lost|disconnected|timed out|failed to connect|service unavailable)").unwrap(),
+            category: LogCategory::ConnectionFailure,
+            summary_template: "Verbindungsproblem erkannt",
+        },
         // ── R5LogNet Warning: lines are gRPC / network startup noise ──────────
         LogPattern {
             regex: Regex::new(r"^R5LogNet: Warning:").unwrap(),
@@ -59,7 +84,7 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
         LogPattern {
             regex: Regex::new(r"R5LogGameInstance.*Version\s+=\s+(.+)").unwrap(),
             category: LogCategory::ServerInfo,
-            summary_template: "Server Version: {1}",
+            summary_template: "Server-Version: {1}",
         },
         LogPattern {
             regex: Regex::new(r"^Unreal Engine version:\s+(.+)").unwrap(),
@@ -92,7 +117,7 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
         LogPattern {
             regex: Regex::new(r#""InviteCode":\s*"([^"]+)""#).unwrap(),
             category: LogCategory::ConnectionInfo,
-            summary_template: "Invite Code: {1}",
+            summary_template: "Invite-Code erkannt: {1}",
         },
         // ── Map / world loading ───────────────────────────────────────────────
         // Extract only the filename from the UE path (e.g. /Game/R5/Levels/R5Island_P → R5Island_P)
@@ -123,14 +148,65 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
             category: LogCategory::BackupDone,
             summary_template: "Backup abgeschlossen",
         },
+        // ── R5 checks / asserts / consistency failures ──────────────────────
+        LogPattern {
+            regex: Regex::new(r"(?i)^R5LogCheck:\s+Error:\s*\[-1:(\d+)\]").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "R5Check Fehler #{1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"(?i)^R5LogCheck:\s+Warning:\s*\[-1:(\d+)\]").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "R5Check Warnung #{1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"(?i)^R5LogBLBusinessRule:\s+Error:.*Condition '([^']+)' failed").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Bedingung fehlgeschlagen: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*!!! R5Check happens !!!").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "R5Check ausgelöst",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*!!! R5NoEntry happens !!!").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "R5NoEntry ausgelöst",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*Condition:\s*'?(.*?)'?$").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Bedingung: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*Where:\s*(.+)$").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Ort: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^\s*Message:\s*(.+)$").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Meldung: {1}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^LogOutputDevice:\s+(Error|Warning):\s+=== FR5CheckDetails::PrintCallstackToLog ===").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Callstack folgt",
+        },
+        LogPattern {
+            regex: Regex::new(r"^LogOutputDevice:\s+(Error|Warning):\s+\[Callstack\]\s+(.+)$").unwrap(),
+            category: LogCategory::R5Check,
+            summary_template: "Callstack: {2}",
+        },
+        LogPattern {
+            regex: Regex::new(r"^LogOutputDevice:\s+(Error|Warning):\s*$").unwrap(),
+            category: LogCategory::BootNoise,
+            summary_template: "",
+        },
         // ── CheckMonitor health summary (periodic report, not error events) ────
         LogPattern {
             regex: Regex::new(r"^R5(Error|Check|Ensure) Report Calls TotalNum").unwrap(),
-            category: LogCategory::Warning,
-            summary_template: "",
-        },
-        LogPattern {
-            regex: Regex::new(r"^R5LogCheck: Warning:").unwrap(),
             category: LogCategory::Warning,
             summary_template: "",
         },
@@ -146,33 +222,38 @@ static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
         LogPattern {
             regex: Regex::new(r"Name '([^']+)'.*\bState 'ReadyToPlay'").unwrap(),
             category: LogCategory::PlayerConnect,
-            summary_template: "Beitritt: {1}",
+            summary_template: "{1} hat sich eingeloggt",
         },
         LogPattern {
             regex: Regex::new(r"Name '([^']+)'.*\bState 'SaidFarewell'").unwrap(),
             category: LogCategory::PlayerDisconnect,
-            summary_template: "Verlassen: {1}",
+            summary_template: "{1} hat den Server verlassen",
+        },
+        LogPattern {
+            regex: Regex::new(r"LogNet:\s+Join succeeded:\s+(.+?)\s*$").unwrap(),
+            category: LogCategory::PlayerConnect,
+            summary_template: "{1} hat sich eingeloggt",
         },
         // Standard UE5 join/logout (fallback for non-R5 servers)
         LogPattern {
-            regex: Regex::new(r"LogNet.*Join request.*[?&]Name=([^&\s\]]+)").unwrap(),
-            category: LogCategory::PlayerConnect,
-            summary_template: "Beitritt: {1}",
+            regex: JOIN_REQUEST_NAME_RE.clone(),
+            category: LogCategory::BootNoise,
+            summary_template: "",
         },
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogin:\s+(\S+)").unwrap(),
             category: LogCategory::PlayerConnect,
-            summary_template: "Beitritt: {1}",
+            summary_template: "{1} hat sich eingeloggt",
         },
         LogPattern {
             regex: Regex::new(r"LogGameMode.*\bLogout:\s+(\S+)").unwrap(),
             category: LogCategory::PlayerDisconnect,
-            summary_template: "Verlassen: {1}",
+            summary_template: "{1} hat den Server verlassen",
         },
         LogPattern {
             regex: Regex::new(r"LogNet.*UNetConnection::Close.*RemoteAddr=([^,\s]+)").unwrap(),
             category: LogCategory::PlayerDisconnect,
-            summary_template: "Verbindung getrennt: {1}",
+            summary_template: "Verbindung zu {1} wurde getrennt",
         },
         // ── Version mismatch ─────────────────────────────────────────────────────
         LogPattern {
@@ -218,12 +299,14 @@ static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]\[(\s*\d+)\]").unwrap()
 });
 
-// Parse UE5 timestamp (UTC) and convert to local time for display
+// R5 log timestamps are UTC. Display them as local clock time in the leading column.
 fn convert_timestamp(raw_ts: &str) -> String {
-    // UE5 format: 2026.05.17-16.11.17:016 — treat as UTC, convert to local timezone
-    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(raw_ts, "%Y.%m.%d-%H.%M.%S:%3f") {
-        let utc = Utc.from_utc_datetime(&ndt);
-        return utc.with_timezone(&Local).format("%H:%M:%S").to_string();
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(raw_ts, "%Y.%m.%d-%H.%M.%S:%3f") {
+        return Utc
+            .from_utc_datetime(&ndt)
+            .with_timezone(&Local)
+            .format("%H:%M:%S")
+            .to_string();
     }
     raw_ts.to_string()
 }
@@ -237,10 +320,34 @@ pub fn content_of(raw: &str) -> &str {
     }
 }
 
+fn level_for_pattern(category: &LogCategory, content: &str) -> LogLevel {
+    match category {
+        LogCategory::ConnectionFailure | LogCategory::Error | LogCategory::VersionMismatch => {
+            LogLevel::Error
+        }
+        LogCategory::Performance | LogCategory::Warning => LogLevel::Warning,
+        LogCategory::R5Check => {
+            if content.contains("Warning:") {
+                LogLevel::Warning
+            } else if content.contains("Error:")
+                || content.contains("failed")
+                || content.contains("NoEntry")
+            {
+                LogLevel::Error
+            } else {
+                LogLevel::Info
+            }
+        }
+        _ => LogLevel::Info,
+    }
+}
+
 pub fn parse_line(raw: &str) -> LogEvent {
     let (timestamp, frame, content) = if let Some(caps) = TIMESTAMP_RE.captures(raw) {
         let ts = caps.get(1).map(|m| convert_timestamp(m.as_str()));
-        let fr = caps.get(2).and_then(|m| m.as_str().trim().parse::<u32>().ok());
+        let fr = caps
+            .get(2)
+            .and_then(|m| m.as_str().trim().parse::<u32>().ok());
         let rest = &raw[caps.get(0).unwrap().end()..];
         (ts, fr, rest)
     } else {
@@ -263,7 +370,7 @@ pub fn parse_line(raw: &str) -> LogEvent {
                 timestamp,
                 frame,
                 category: pattern.category.clone(),
-                level: LogLevel::Info,
+                level: level_for_pattern(&pattern.category, content),
                 summary,
                 raw_line: raw.to_string(),
             };
@@ -281,7 +388,9 @@ pub fn parse_line(raw: &str) -> LogEvent {
 
     let summary = match category {
         // Error/Warning/Performance: full content, inline frames stripped
-        LogCategory::Error | LogCategory::Warning | LogCategory::Performance => strip_inline_frames(content),
+        LogCategory::Error | LogCategory::Warning | LogCategory::Performance => {
+            strip_inline_frames(content)
+        }
         // Unknown: strip frames + cap at 200 chars to avoid noise walls
         _ => strip_inline_frames(content).chars().take(200).collect(),
     };
@@ -293,5 +402,68 @@ pub fn parse_line(raw: &str) -> LogEvent {
         level,
         summary,
         raw_line: raw.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_windrose_join_succeeded_as_player_connect() {
+        let event = parse_line("[2026.05.18-14.04.37:106][461]LogNet: Join succeeded: TristARRRnX");
+        let expected_timestamp = Utc
+            .from_utc_datetime(
+                &NaiveDateTime::parse_from_str("2026.05.18-14.04.37:106", "%Y.%m.%d-%H.%M.%S:%3f")
+                    .unwrap(),
+            )
+            .with_timezone(&Local)
+            .format("%H:%M:%S")
+            .to_string();
+
+        assert_eq!(event.category, LogCategory::PlayerConnect);
+        assert_eq!(event.timestamp.as_deref(), Some(expected_timestamp.as_str()));
+        assert_eq!(event.summary, "TristARRRnX hat sich eingeloggt");
+    }
+
+    #[test]
+    fn parses_r5_said_farewell_as_player_disconnect() {
+        let event = parse_line("     1. Name 'TristARRRnX'. AccountId 'abc'. State 'SaidFarewell'. TimeOnServer +00:00:59.963.");
+        assert_eq!(event.category, LogCategory::PlayerDisconnect);
+        assert_eq!(event.summary, "TristARRRnX hat den Server verlassen");
+    }
+
+    #[test]
+    fn treats_join_request_machine_name_as_hidden_noise() {
+        let event = parse_line("[2026.05.18-15.09.05:000][123]LogNet: Join request: /Game/Maps/Lobby/R5ServerLobby?BLPlayerSessionId=fbf28123198044779a6519036118465c?Name=Tris9800X3D-C2DD44FD4D92E014EA76F4B00E0C99AC?SplitscreenCount=1");
+        assert_eq!(event.category, LogCategory::BootNoise);
+        assert!(event.summary.contains("Join request"));
+        assert_eq!(
+            join_request_name(&event.raw_line).as_deref(),
+            Some("Tris9800X3D-C2DD44FD4D92E014EA76F4B00E0C99AC")
+        );
+    }
+
+    #[test]
+    fn parses_connection_timeout_as_connection_failure() {
+        let event = parse_line("[2026.05.26-04.03.12:123][ 42]LogNet: Warning: UNetConnection::Tick: Connection TIMED OUT. Closing connection.");
+        assert_eq!(event.category, LogCategory::ConnectionFailure);
+        assert_eq!(event.summary, "Verbindung zum Server verloren");
+    }
+
+    #[test]
+    fn parses_r5_check_error_block_as_r5check() {
+        let event = parse_line("[2026.04.17-00.48.09:547][959]R5LogCheck: Error: [-1:417385]");
+        assert_eq!(event.category, LogCategory::R5Check);
+        assert_eq!(event.level, LogLevel::Error);
+        assert!(event.summary.contains("417385"));
+    }
+
+    #[test]
+    fn parses_r5_business_rule_condition_as_r5check() {
+        let event = parse_line("[2026.04.17-00.48.09:541][959]R5LogBLBusinessRule: Error: [002959] TR5BLBusinessRule<>::DoForServer 'R5BLPlayer_ValidateData' rule Do() exception: Condition 'RewardLevel < CurrentLevel' failed. [R5BLEntityProgressionCntr::ValidateProgression](D:\\Source\\Build\\work\\gameRepoCheckoutDir\\Plugins\\R5BusinessRules\\Source\\R5BusinessRules\\Cpp\\R5Rules\\Player\\EntityProgression\\R5BLEntityProgressionController.r5bl.cpp:229).");
+        assert_eq!(event.category, LogCategory::R5Check);
+        assert_eq!(event.level, LogLevel::Error);
+        assert_eq!(event.summary, "Bedingung fehlgeschlagen: RewardLevel < CurrentLevel");
     }
 }

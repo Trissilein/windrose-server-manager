@@ -17,9 +17,11 @@ const CAT_META: Record<LogCategory, CatMeta> = {
   Auth:            { label: "Auth",            icon: "🔑", color: "#7b8aff", bg: "rgba(91,106,240,0.12)",  border: "rgba(91,106,240,0.35)" },
   Registration:    { label: "Registrierung",   icon: "📋", color: "#7b8aff", bg: "rgba(91,106,240,0.12)",  border: "rgba(91,106,240,0.35)" },
   Shutdown:        { label: "Shutdown",        icon: "■",  color: "#f0b429", bg: "rgba(240,180,41,0.12)",  border: "rgba(240,180,41,0.35)" },
+  R5Check:         { label: "R5 Check",        icon: "!",  color: "#ff7b72", bg: "rgba(255,123,114,0.12)", border: "rgba(255,123,114,0.35)" },
   WorldLoad:       { label: "Welt",            icon: "🌍", color: "#34c97e", bg: "rgba(52,201,126,0.10)",  border: "rgba(52,201,126,0.30)" },
   MapLoad:         { label: "Karte",           icon: "🗺",  color: "#34c97e", bg: "rgba(52,201,126,0.10)",  border: "rgba(52,201,126,0.30)" },
   ConnectionInfo:  { label: "Verbindung",      icon: "🔗", color: "#4dd0e1", bg: "rgba(77,208,225,0.10)",  border: "rgba(77,208,225,0.30)" },
+  ConnectionFailure:{ label: "Disconnect",      icon: "⟲",  color: "#e05252", bg: "rgba(224,82,82,0.10)",   border: "rgba(224,82,82,0.30)" },
   RegionPing:      { label: "Ping",            icon: "📡", color: "#4dd0e1", bg: "rgba(77,208,225,0.10)",  border: "rgba(77,208,225,0.30)" },
   PlayerConnect:   { label: "Beitritt",        icon: "→",  color: "#b39ddb", bg: "rgba(179,157,219,0.12)", border: "rgba(179,157,219,0.35)" },
   PlayerDisconnect:{ label: "Verlassen",       icon: "←",  color: "#b39ddb", bg: "rgba(179,157,219,0.12)", border: "rgba(179,157,219,0.35)" },
@@ -35,8 +37,9 @@ const CAT_META: Record<LogCategory, CatMeta> = {
 
 const ALL_CATEGORIES: LogCategory[] = [
   "ServerReady", "ServerInfo", "Auth", "Registration", "Shutdown",
+  "R5Check",
   "WorldLoad", "MapLoad",
-  "ConnectionInfo", "RegionPing",
+  "ConnectionInfo", "ConnectionFailure", "RegionPing",
   "PlayerConnect", "PlayerDisconnect",
   "BackupStart", "BackupDone",
   "Error", "Warning", "Performance", "VersionMismatch",
@@ -48,6 +51,7 @@ const DEFAULT_HIDDEN: Set<LogCategory> = new Set(["BootNoise", "Unknown"]);
 // Strip known UE5/R5 log prefixes from Unknown/BootNoise lines so the text is readable
 // e.g. "R5LogNet: Warning: Something" → "Something"
 const LOG_PREFIX_RE = /^[A-Za-z0-9_]+:\s*(?:Warning:|Log:|Error:|Display:)?\s*/;
+const RAW_TIMESTAMP_RE = /^\[\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3}\]\[\s*\d+\]/;
 
 // Replace runs of 4+ spaces with a line break — UE5 uses spaces for column alignment,
 // which makes lines very wide. In RAW mode the original is preserved.
@@ -55,27 +59,56 @@ function collapseSpaces(s: string): string {
   return s.replace(/ {4,}/g, "\n");
 }
 
-// Aggregation: collapse consecutive log lines with identical category + summary
-interface AggLine {
-  event: LogEvent;
+interface LogGroup {
+  events: LogEvent[];
   count: number;
 }
 
-function groupConsecutive(events: LogEvent[]): AggLine[] {
-  const result: AggLine[] = [];
+function shouldMergeIntoGroup(anchor: LogEvent, ev: LogEvent): boolean {
+  const sameRepeat =
+    anchor.category === ev.category &&
+    anchor.summary === ev.summary &&
+    anchor.level === ev.level;
+  const sameLogFrame =
+    anchor.timestamp !== null &&
+    ev.timestamp !== null &&
+    anchor.frame !== null &&
+    ev.frame !== null &&
+    anchor.timestamp === ev.timestamp &&
+    anchor.frame === ev.frame;
+  return sameRepeat || sameLogFrame;
+}
+
+function buildDisplayGroups(events: LogEvent[]): LogGroup[] {
+  const result: LogGroup[] = [];
   for (const ev of events) {
     const last = result[result.length - 1];
-    if (last && last.event.category === ev.category && last.event.summary === ev.summary) {
+    if (last && shouldMergeIntoGroup(last.events[0], ev)) {
+      last.events.push(ev);
       last.count++;
     } else {
-      result.push({ event: ev, count: 1 });
+      result.push({ events: [ev], count: 1 });
     }
   }
   return result;
 }
 
+function headlinePriority(ev: LogEvent): number {
+  if (ev.level === "Error") return 0;
+  if (ev.level === "Warning") return 1;
+  if (ev.category === "R5Check") return 2;
+  return 3;
+}
+
+function pickHeadline(events: LogEvent[]): LogEvent {
+  return events.reduce((best, ev) => {
+    if (headlinePriority(ev) < headlinePriority(best)) return ev;
+    return best;
+  }, events[0]);
+}
+
 function renderSummary(ev: LogEvent, showRaw: boolean): string {
-  if (showRaw) return ev.raw_line;
+  if (showRaw) return ev.raw_line.replace(RAW_TIMESTAMP_RE, "").trimStart();
   let text = ev.summary;
   if (ev.category === "Unknown" || ev.category === "BootNoise") {
     text = text.replace(LOG_PREFIX_RE, "").trim() || text;
@@ -145,8 +178,10 @@ export default function LogViewer({ events }: Props) {
   const [showRaw, setShowRaw] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [aggregate, setAggregate] = useState(true);
+  const [search, setSearch] = useState("");
   const [hiddenCats, setHiddenCats] = useState<Set<LogCategory>>(new Set(DEFAULT_HIDDEN));
   const bottomRef = useRef<HTMLDivElement>(null);
+  const searchNeedle = search.trim().toLowerCase();
 
   useEffect(() => {
     if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "instant" });
@@ -172,12 +207,23 @@ export default function LogViewer({ events }: Props) {
   }, [events]);
 
   const visible = useMemo(
-    () => events.filter((e) => !hiddenCats.has(e.category)),
-    [events, hiddenCats]
+    () => events.filter((e) => {
+      if (hiddenCats.has(e.category)) return false;
+      if (!searchNeedle) return true;
+      const searchable = [
+        e.summary,
+        e.raw_line,
+        e.timestamp ?? "",
+        CAT_META[e.category].label,
+        e.category,
+      ].join("\n").toLowerCase();
+      return searchable.includes(searchNeedle);
+    }),
+    [events, hiddenCats, searchNeedle]
   );
 
-  const aggregated = useMemo<AggLine[]>(
-    () => aggregate ? groupConsecutive(visible) : visible.map((ev) => ({ event: ev, count: 1 })),
+  const displayGroups = useMemo<LogGroup[]>(
+    () => aggregate ? buildDisplayGroups(visible) : visible.map((ev) => ({ events: [ev], count: 1 })),
     [visible, aggregate]
   );
 
@@ -196,6 +242,19 @@ export default function LogViewer({ events }: Props) {
           ))}
         </div>
         <div className="log-controls">
+          <input
+            className="log-search"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Logs suchen..."
+            title="Summary, Raw-Zeile, Zeit oder Kategorie suchen"
+          />
+          {search && (
+            <button className="btn btn-small" onClick={() => setSearch("")} title="Suche löschen">
+              ×
+            </button>
+          )}
           <button className="btn btn-small" onClick={showAll} title="Alle einblenden">Alle</button>
           <button className="btn btn-small" onClick={hideAll} title="Alle ausblenden">Keine</button>
           <span style={{ fontSize: 11, color: "var(--muted)" }}>
@@ -221,38 +280,61 @@ export default function LogViewer({ events }: Props) {
           <div className="empty-hint" style={{ paddingTop: 40 }}>
             {events.length === 0
               ? "Warte auf Server-Logs…"
-              : "Keine Einträge für die aktiven Filter"}
+              : search
+                ? "Keine Einträge für Suche und aktive Filter"
+                : "Keine Einträge für die aktiven Filter"}
           </div>
         )}
-        {aggregated.map(({ event: ev, count }, i) => {
-          const meta = CAT_META[ev.category];
+        {displayGroups.map((group, i) => {
+          const primary = pickHeadline(group.events);
+          const headlineIndex = group.events.indexOf(primary);
+          const meta = CAT_META[primary.category];
+          const detailEvents = group.events.filter((_, idx) => idx !== headlineIndex);
+          const duplicatesOnly =
+            group.count > 1 &&
+            group.events.every((ev) =>
+              ev.category === primary.category &&
+              ev.summary === primary.summary &&
+              ev.level === primary.level
+            );
+          const blockClass = primary.category === "R5Check" ? "log-block-r5" : "";
           return (
             <div
-              key={i}
-              className={`log-line log-${ev.level.toLowerCase()}`}
-              style={{ borderLeft: `2px solid ${meta.color}22` }}
+              key={`${primary.timestamp ?? "no-ts"}-${primary.frame ?? "no-frame"}-${i}`}
+              className={`log-block ${blockClass}`}
             >
-              <span className="log-ts">{ev.timestamp ?? ""}</span>
-              <span className="log-cat" style={{ color: meta.color }}>
-                {meta.icon} {meta.label}
-              </span>
-              <span className="log-text">
-                {renderSummary(ev, showRaw)}
-                {count > 1 && (
-                  <span style={{
-                    marginLeft: 8,
-                    background: "rgba(102,110,153,0.2)",
-                    color: "#666e99",
-                    borderRadius: 10,
-                    padding: "1px 6px",
-                    fontSize: 10,
-                    fontWeight: 700,
-                    whiteSpace: "nowrap",
-                  }}>
-                    ×{count}
-                  </span>
-                )}
-              </span>
+              <div
+                className={`log-line log-line-primary log-${primary.level.toLowerCase()}`}
+                style={{ borderLeft: `2px solid ${meta.color}44` }}
+              >
+                <span className="log-ts">{primary.timestamp ?? ""}</span>
+                <span className="log-cat" style={{ color: meta.color }}>
+                  {meta.icon} {meta.label}
+                </span>
+                <span className="log-text">
+                  {renderSummary(primary, showRaw)}
+                  {group.count > 1 && (
+                    <span className="log-count">
+                      ×{group.count}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {!duplicatesOnly && detailEvents.length > 0 && (
+                <div className="log-group-details">
+                  {detailEvents.map((detail, j) => (
+                    <div
+                      key={`${detail.timestamp ?? "no-ts"}-${detail.frame ?? "no-frame"}-${j}`}
+                      className={`log-detail-line log-${detail.level.toLowerCase()}`}
+                    >
+                      <span className="log-detail-mark">↳</span>
+                      <span className="log-detail-text">
+                        {renderSummary(detail, showRaw)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}

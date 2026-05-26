@@ -9,11 +9,29 @@ mod world_manager;
 
 pub mod types;
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
+use tauri::{AppHandle, Manager, RunEvent};
 use tokio::sync::Mutex;
 
 use server_process::ServerProcess;
 use types::{AppConfig, BackupInfo, LearnedNoiseEntry, ServerStartInfo, WorldInfo, WorldLaunchOption};
+
+pub(crate) fn begin_graceful_shutdown(app: AppHandle) {
+    let shutdown_in_progress = app.state::<Arc<AtomicBool>>().inner().clone();
+    if shutdown_in_progress.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let server_process = app.state::<Arc<Mutex<ServerProcess>>>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = server_process.lock().await.stop(app.clone()).await;
+        app.exit(0);
+    });
+}
 
 // ── App-Config ────────────────────────────────────────────────────────────────
 
@@ -23,8 +41,73 @@ fn load_app_config() -> AppConfig {
 }
 
 #[tauri::command]
-fn save_app_config(config: AppConfig) -> Result<(), String> {
+fn save_app_config(mut config: AppConfig) -> Result<(), String> {
+    let existing = app_config::load();
+    config.player_history = existing.player_history;
     app_config::save(&config)
+}
+
+#[tauri::command]
+fn set_player_hidden(world_id: String, player_name: String, hidden: bool) -> Result<(), String> {
+    let world_id = world_id.trim();
+    let player_name = player_name.trim();
+    if world_id.is_empty() || player_name.is_empty() {
+        return Ok(());
+    }
+
+    let mut cfg = app_config::load();
+    if hidden {
+        let hidden_players = cfg.hidden_players.entry(world_id.to_string()).or_default();
+        if !hidden_players.iter().any(|value| value == player_name) {
+            hidden_players.push(player_name.to_string());
+            hidden_players.sort_unstable();
+            hidden_players.dedup();
+        }
+    } else {
+        let should_remove = if let Some(hidden_players) = cfg.hidden_players.get_mut(world_id) {
+            hidden_players.retain(|value| value != player_name);
+            hidden_players.is_empty()
+        } else {
+            false
+        };
+        if should_remove {
+            cfg.hidden_players.remove(world_id);
+        }
+    }
+
+    app_config::save(&cfg)
+}
+
+#[tauri::command]
+fn reset_player_history_entry(world_id: String, player_name: String) -> Result<(), String> {
+    let world_id = world_id.trim();
+    let player_name = player_name.trim();
+    if world_id.is_empty() || player_name.is_empty() {
+        return Ok(());
+    }
+
+    let mut cfg = app_config::load();
+    let remove_history_world = if let Some(world_history) = cfg.player_history.get_mut(world_id) {
+        world_history.remove(player_name);
+        world_history.is_empty()
+    } else {
+        false
+    };
+    if remove_history_world {
+        cfg.player_history.remove(world_id);
+    }
+
+    let remove_hidden_world = if let Some(hidden_players) = cfg.hidden_players.get_mut(world_id) {
+        hidden_players.retain(|value| value != player_name);
+        hidden_players.is_empty()
+    } else {
+        false
+    };
+    if remove_hidden_world {
+        cfg.hidden_players.remove(world_id);
+    }
+
+    app_config::save(&cfg)
 }
 
 #[tauri::command]
@@ -153,9 +236,14 @@ async fn stop_server(
 #[tauri::command]
 async fn kick_player(
     name: String,
+    client_login_name: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ServerProcess>>>,
 ) -> Result<(), String> {
-    state.lock().await.kick_player(&name).await
+    state
+        .lock()
+        .await
+        .kick_player(&name, client_login_name.as_deref())
+        .await
 }
 
 // ── Server Update (SteamCMD) ──────────────────────────────────────────────────
@@ -256,9 +344,11 @@ fn get_worlds_for_launch(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let server_process = Arc::new(Mutex::new(ServerProcess::new()));
+    let shutdown_in_progress = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .manage(server_process)
+        .manage(shutdown_in_progress.clone())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -271,6 +361,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_app_config,
             save_app_config,
+            set_player_hidden,
+            reset_player_history_entry,
             detect_server_path,
             read_server_config,
             write_server_config,
@@ -299,6 +391,22 @@ pub fn run() {
             detect_steamcmd_path,
             run_server_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |app, event| {
+            if let RunEvent::ExitRequested { api, .. } = event {
+                if shutdown_in_progress.load(Ordering::SeqCst) {
+                    return;
+                }
+                api.prevent_exit();
+                begin_graceful_shutdown(app.clone());
+            } else if let RunEvent::Resumed = event {
+                ServerProcess::schedule_recovery_probe(
+                    app.clone(),
+                    Duration::from_secs(0),
+                    "app-resumed",
+                    false,
+                );
+            }
+        });
 }

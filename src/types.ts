@@ -6,6 +6,19 @@ export type ServerStatus = "Stopped" | "Starting" | "Running" | "Stopping";
 export interface PlayerInfo {
   name: string;
   joined_at: string;
+  client_name: string | null;
+  client_login_name: string | null;
+}
+
+export interface PlayerHistoryEntry {
+  name: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  last_session_started_at: string;
+  last_session_ended_at: string | null;
+  total_play_seconds: number;
+  connect_count: number;
+  last_client_name: string | null;
 }
 
 export interface WorldLaunchOption {
@@ -40,10 +53,12 @@ export type LogCategory =
   | "BackupStart"
   | "BackupDone"
   | "ConnectionInfo"
+  | "ConnectionFailure"
   | "MapLoad"
   | "Auth"
   | "Registration"
   | "Shutdown"
+  | "R5Check"
   | "PlayerConnect"
   | "PlayerDisconnect"
   | "Error"
@@ -137,6 +152,8 @@ export interface AppConfig {
   server_path: string;
   backup_path: string;
   world_aliases: Record<string, string>;
+  player_history: Record<string, Record<string, PlayerHistoryEntry>>;
+  hidden_players: Record<string, string[]>;
   window: WindowConfig;
   learned_noise: LearnedNoiseEntry[];
   steamcmd_path: string | null;
