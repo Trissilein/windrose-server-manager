@@ -30,6 +30,22 @@ pub fn join_request_name(raw: &str) -> Option<String> {
 
 static PATTERNS: LazyLock<Vec<LogPattern>> = LazyLock::new(|| {
     vec![
+        // ── Connection recovery / loss ───────────────────────────────────────
+        LogPattern {
+            regex: Regex::new(r"(?i)^R5LogNet:.*(connection (lost|timed out|reset)|socket error|network failure|disconnect|failed to connect)").unwrap(),
+            category: LogCategory::ConnectionFailure,
+            summary_template: "Verbindungsproblem erkannt",
+        },
+        LogPattern {
+            regex: Regex::new(r"(?i)^LogNet:.*UNetConnection::Tick: Connection TIMED OUT").unwrap(),
+            category: LogCategory::ConnectionFailure,
+            summary_template: "Verbindung zum Server verloren",
+        },
+        LogPattern {
+            regex: Regex::new(r"(?i)^LogOnline:.*(connection.*lost|disconnected|timed out|failed to connect|service unavailable)").unwrap(),
+            category: LogCategory::ConnectionFailure,
+            summary_template: "Verbindungsproblem erkannt",
+        },
         // ── R5LogNet Warning: lines are gRPC / network startup noise ──────────
         LogPattern {
             regex: Regex::new(r"^R5LogNet: Warning:").unwrap(),
@@ -353,5 +369,12 @@ mod tests {
             join_request_name(&event.raw_line).as_deref(),
             Some("Tris9800X3D-C2DD44FD4D92E014EA76F4B00E0C99AC")
         );
+    }
+
+    #[test]
+    fn parses_connection_timeout_as_connection_failure() {
+        let event = parse_line("[2026.05.26-04.03.12:123][ 42]LogNet: Warning: UNetConnection::Tick: Connection TIMED OUT. Closing connection.");
+        assert_eq!(event.category, LogCategory::ConnectionFailure);
+        assert_eq!(event.summary, "Verbindung zum Server verloren");
     }
 }

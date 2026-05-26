@@ -13,6 +13,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use std::time::Duration;
 use tauri::{AppHandle, Manager, RunEvent};
 use tokio::sync::Mutex;
 
@@ -44,6 +45,69 @@ fn save_app_config(mut config: AppConfig) -> Result<(), String> {
     let existing = app_config::load();
     config.player_history = existing.player_history;
     app_config::save(&config)
+}
+
+#[tauri::command]
+fn set_player_hidden(world_id: String, player_name: String, hidden: bool) -> Result<(), String> {
+    let world_id = world_id.trim();
+    let player_name = player_name.trim();
+    if world_id.is_empty() || player_name.is_empty() {
+        return Ok(());
+    }
+
+    let mut cfg = app_config::load();
+    if hidden {
+        let hidden_players = cfg.hidden_players.entry(world_id.to_string()).or_default();
+        if !hidden_players.iter().any(|value| value == player_name) {
+            hidden_players.push(player_name.to_string());
+            hidden_players.sort_unstable();
+            hidden_players.dedup();
+        }
+    } else {
+        let should_remove = if let Some(hidden_players) = cfg.hidden_players.get_mut(world_id) {
+            hidden_players.retain(|value| value != player_name);
+            hidden_players.is_empty()
+        } else {
+            false
+        };
+        if should_remove {
+            cfg.hidden_players.remove(world_id);
+        }
+    }
+
+    app_config::save(&cfg)
+}
+
+#[tauri::command]
+fn reset_player_history_entry(world_id: String, player_name: String) -> Result<(), String> {
+    let world_id = world_id.trim();
+    let player_name = player_name.trim();
+    if world_id.is_empty() || player_name.is_empty() {
+        return Ok(());
+    }
+
+    let mut cfg = app_config::load();
+    let remove_history_world = if let Some(world_history) = cfg.player_history.get_mut(world_id) {
+        world_history.remove(player_name);
+        world_history.is_empty()
+    } else {
+        false
+    };
+    if remove_history_world {
+        cfg.player_history.remove(world_id);
+    }
+
+    let remove_hidden_world = if let Some(hidden_players) = cfg.hidden_players.get_mut(world_id) {
+        hidden_players.retain(|value| value != player_name);
+        hidden_players.is_empty()
+    } else {
+        false
+    };
+    if remove_hidden_world {
+        cfg.hidden_players.remove(world_id);
+    }
+
+    app_config::save(&cfg)
 }
 
 #[tauri::command]
@@ -297,6 +361,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_app_config,
             save_app_config,
+            set_player_hidden,
+            reset_player_history_entry,
             detect_server_path,
             read_server_config,
             write_server_config,
@@ -334,6 +400,13 @@ pub fn run() {
                 }
                 api.prevent_exit();
                 begin_graceful_shutdown(app.clone());
+            } else if let RunEvent::Resumed = event {
+                ServerProcess::schedule_recovery_probe(
+                    app.clone(),
+                    Duration::from_secs(0),
+                    "app-resumed",
+                    false,
+                );
             }
         });
 }

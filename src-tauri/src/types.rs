@@ -84,6 +84,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub player_history: HashMap<String, HashMap<String, PlayerHistoryEntry>>,
     #[serde(default)]
+    pub hidden_players: HashMap<String, Vec<String>>,
+    #[serde(default)]
     pub window: WindowConfig,
     #[serde(default)]
     pub learned_noise: Vec<LearnedNoiseEntry>,
@@ -120,6 +122,7 @@ impl Default for AppConfig {
             backup_path: String::new(),
             world_aliases: HashMap::new(),
             player_history: HashMap::new(),
+            hidden_players: HashMap::new(),
             window: WindowConfig::default(),
             learned_noise: Vec::new(),
             steamcmd_path: None,
@@ -231,6 +234,7 @@ pub enum LogCategory {
     BackupStart,
     BackupDone,
     ConnectionInfo,
+    ConnectionFailure,
     MapLoad,
     Auth,
     Registration,

@@ -1,9 +1,11 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use tauri::{AppHandle, Emitter};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -19,6 +21,97 @@ struct JoinRequestHint {
     raw_name: String,
     client_name: String,
     seen_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct LaunchContext {
+    server_root: String,
+    server_info: Option<ServerStartInfo>,
+    learned_noise: Vec<LearnedNoiseEntry>,
+}
+
+const HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
+const HEALTH_SIGNAL_STALE_AFTER_SECS: u64 = 45;
+const HEALTH_MISS_THRESHOLD: u32 = 2;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub enum RecoveryMode {
+    Healthy,
+    Retrying,
+    BlockedByPlayers,
+    Restarting,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryStatus {
+    pub mode: RecoveryMode,
+    pub consecutive_misses: u32,
+    pub threshold: u32,
+    pub last_health_signal_at: Option<String>,
+    pub last_check_at: Option<String>,
+    pub last_reason: Option<String>,
+    pub players_online: u32,
+}
+
+#[derive(Debug, Clone)]
+struct RecoveryTracker {
+    consecutive_misses: u32,
+    last_health_signal_at: Option<Instant>,
+    last_health_signal_label: Option<String>,
+    last_check_at: Option<String>,
+    last_reason: Option<String>,
+}
+
+impl RecoveryTracker {
+    fn new() -> Self {
+        Self {
+            consecutive_misses: 0,
+            last_health_signal_at: None,
+            last_health_signal_label: None,
+            last_check_at: None,
+            last_reason: None,
+        }
+    }
+
+    fn note_signal(&mut self, reason: &str) {
+        self.consecutive_misses = 0;
+        self.last_health_signal_at = Some(Instant::now());
+        self.last_health_signal_label = Some(chrono::Local::now().to_rfc3339());
+        self.last_check_at = Some(chrono::Local::now().to_rfc3339());
+        self.last_reason = Some(reason.to_string());
+    }
+
+    fn note_bootstrap(&mut self) {
+        self.note_signal("bootstrap");
+    }
+
+    fn note_miss(&mut self, reason: &str) {
+        self.consecutive_misses = self
+            .consecutive_misses
+            .saturating_add(1)
+            .min(HEALTH_MISS_THRESHOLD);
+        self.last_check_at = Some(chrono::Local::now().to_rfc3339());
+        self.last_reason = Some(reason.to_string());
+    }
+
+    fn is_signal_fresh(&self) -> bool {
+        self.last_health_signal_at
+            .map(|instant| instant.elapsed() <= Duration::from_secs(HEALTH_SIGNAL_STALE_AFTER_SECS))
+            .unwrap_or(false)
+    }
+
+    fn snapshot(&self, players_online: u32, mode: RecoveryMode) -> RecoveryStatus {
+        RecoveryStatus {
+            mode,
+            consecutive_misses: self.consecutive_misses,
+            threshold: HEALTH_MISS_THRESHOLD,
+            last_health_signal_at: self.last_health_signal_label.clone(),
+            last_check_at: self.last_check_at.clone(),
+            last_reason: self.last_reason.clone(),
+            players_online,
+        }
+    }
 }
 
 fn session_seconds(started_at: &str, ended_at: &str) -> u64 {
@@ -195,6 +288,9 @@ async fn process_log_line(
     noise_learner: &mut noise_learner::NoiseLearner,
 ) {
     let mut event = log_parser::parse_line(line);
+    let mut recovery_signal: Option<&'static str> = None;
+    let mut recovery_probe: Option<(&'static str, bool)> = None;
+    let mut recovery_eval = false;
 
     if let Some(raw_name) = log_parser::join_request_name(line) {
         let mut pending = pending_join_requests.lock().await;
@@ -215,6 +311,10 @@ async fn process_log_line(
             LogCategory::ServerReady => {
                 state.status = ServerStatus::Running;
                 dirty = true;
+                recovery_signal = Some("ServerReady");
+            }
+            LogCategory::RegionPing => {
+                recovery_signal = Some("RegionPing");
             }
             LogCategory::ConnectionInfo => {
                 if let Some(code) = event
@@ -239,6 +339,9 @@ async fn process_log_line(
             LogCategory::Shutdown => {
                 state.status = ServerStatus::Stopping;
                 dirty = true;
+            }
+            LogCategory::ConnectionFailure => {
+                recovery_probe = Some(("ConnectionFailure", true));
             }
             LogCategory::PlayerConnect => {
                 let name = player_name_from_connect_summary(&event.summary);
@@ -280,6 +383,9 @@ async fn process_log_line(
                         state.players.retain(|p| p.name != name);
                         state.player_count = Some(state.players.len() as u32);
                         dirty = true;
+                        if state.players.is_empty() {
+                            recovery_eval = true;
+                        }
                     }
                 }
             }
@@ -295,6 +401,22 @@ async fn process_log_line(
             let _ = app_clone.emit("server-status", state.clone());
         }
     }
+
+    if let Some(reason) = recovery_signal {
+        ServerProcess::schedule_recovery_signal(app_clone.clone(), Duration::from_secs(0), reason);
+    }
+    if let Some((reason, force_miss)) = recovery_probe {
+        ServerProcess::schedule_recovery_probe(
+            app_clone.clone(),
+            Duration::from_secs(0),
+            reason,
+            force_miss,
+        );
+    }
+    if recovery_eval {
+        ServerProcess::schedule_recovery_evaluation(app_clone.clone(), Duration::from_secs(0));
+    }
+
     let _ = app_clone.emit("log-event", &event);
 }
 
@@ -372,6 +494,9 @@ pub struct ServerProcess {
     child_pid: Arc<Mutex<Option<u32>>>,
     child_stdin: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
     pending_join_requests: Arc<Mutex<Vec<JoinRequestHint>>>,
+    launch_context: Arc<Mutex<Option<LaunchContext>>>,
+    recovery: Arc<Mutex<RecoveryTracker>>,
+    recovery_in_progress: Arc<AtomicBool>,
 }
 
 impl ServerProcess {
@@ -381,11 +506,151 @@ impl ServerProcess {
             child_pid: Arc::new(Mutex::new(None)),
             child_stdin: Arc::new(Mutex::new(None)),
             pending_join_requests: Arc::new(Mutex::new(Vec::new())),
+            launch_context: Arc::new(Mutex::new(None)),
+            recovery: Arc::new(Mutex::new(RecoveryTracker::new())),
+            recovery_in_progress: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub async fn get_state(&self) -> ServerState {
         self.state.lock().await.clone()
+    }
+
+    async fn emit_recovery_status(&self, app: &AppHandle) {
+        let players_online = self.state.lock().await.players.len() as u32;
+        let recovery = self.recovery.lock().await;
+        let mode = if self.recovery_in_progress.load(Ordering::SeqCst) {
+            RecoveryMode::Restarting
+        } else if recovery.consecutive_misses >= HEALTH_MISS_THRESHOLD {
+            if players_online > 0 {
+                RecoveryMode::BlockedByPlayers
+            } else {
+                RecoveryMode::Retrying
+            }
+        } else if recovery.consecutive_misses > 0 {
+            RecoveryMode::Retrying
+        } else {
+            RecoveryMode::Healthy
+        };
+
+        let snapshot = recovery.snapshot(players_online, mode);
+        let _ = app.emit("recovery-status", snapshot);
+    }
+
+    async fn mark_health_signal(&self, app: &AppHandle, reason: &str) {
+        {
+            let mut recovery = self.recovery.lock().await;
+            recovery.note_signal(reason);
+        }
+        self.emit_recovery_status(app).await;
+    }
+
+    async fn note_health_miss(&self, app: &AppHandle, reason: &str) {
+        {
+            let mut recovery = self.recovery.lock().await;
+            recovery.note_miss(reason);
+        }
+        self.emit_recovery_status(app).await;
+    }
+
+    pub(crate) fn schedule_recovery_signal(app: AppHandle, delay: Duration, reason: &'static str) {
+        let server_process = app.state::<Arc<Mutex<ServerProcess>>>().inner().clone();
+        tauri::async_runtime::spawn(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+
+            let guard = server_process.lock().await;
+            guard.mark_health_signal(&app, reason).await;
+        });
+    }
+
+    async fn maybe_restart_if_degraded(&self, app: AppHandle) {
+        let (players_online, status) = {
+            let state = self.state.lock().await;
+            (state.players.len() as u32, state.status.clone())
+        };
+        let has_launch_context = self.launch_context.lock().await.is_some();
+        let consecutive_misses = self.recovery.lock().await.consecutive_misses;
+
+        let should_restart = consecutive_misses >= HEALTH_MISS_THRESHOLD
+            && players_online == 0
+            && status != ServerStatus::Stopping
+            && has_launch_context;
+
+        if !should_restart {
+            self.emit_recovery_status(&app).await;
+            return;
+        }
+
+        if self.recovery_in_progress.swap(true, Ordering::SeqCst) {
+            self.emit_recovery_status(&app).await;
+            return;
+        }
+
+        {
+            let mut recovery = self.recovery.lock().await;
+            recovery.last_reason = Some("restart".to_string());
+        }
+        self.emit_recovery_status(&app).await;
+
+        let server_process = app.state::<Arc<Mutex<ServerProcess>>>().inner().clone();
+        let app_clone = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let result = {
+                let guard = server_process.lock().await;
+                guard.restart_last_launch(app_clone.clone()).await
+            };
+
+            {
+                let guard = server_process.lock().await;
+                guard.recovery_in_progress.store(false, Ordering::SeqCst);
+            }
+
+            if let Err(err) = result {
+                let _ = app_clone.emit("server-restart-failed", err);
+            }
+        });
+    }
+
+    pub(crate) fn schedule_recovery_probe(app: AppHandle, delay: Duration, reason: &'static str, force_miss: bool) {
+        let server_process = app.state::<Arc<Mutex<ServerProcess>>>().inner().clone();
+        tauri::async_runtime::spawn(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+
+            let guard = server_process.lock().await;
+            guard.run_recovery_probe(app.clone(), reason, force_miss).await;
+        });
+    }
+
+    pub(crate) fn schedule_recovery_evaluation(app: AppHandle, delay: Duration) {
+        let server_process = app.state::<Arc<Mutex<ServerProcess>>>().inner().clone();
+        tauri::async_runtime::spawn(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+
+            let guard = server_process.lock().await;
+            guard.maybe_restart_if_degraded(app.clone()).await;
+        });
+    }
+
+    async fn run_recovery_probe(&self, app: AppHandle, reason: &str, force_miss: bool) {
+        let is_fresh = {
+            let recovery = self.recovery.lock().await;
+            recovery.is_signal_fresh()
+        };
+
+        let should_mark_signal = !force_miss && is_fresh;
+        if should_mark_signal {
+            self.mark_health_signal(&app, reason).await;
+        } else {
+            self.note_health_miss(&app, reason).await;
+        }
+
+        self.maybe_restart_if_degraded(app).await;
     }
 
     pub async fn start(
@@ -436,6 +701,16 @@ impl ServerProcess {
                 };
             }
         }
+        *self.launch_context.lock().await = Some(LaunchContext {
+            server_root: server_root.to_string(),
+            server_info: server_info.clone(),
+            learned_noise: learned_noise.clone(),
+        });
+        {
+            let mut recovery = self.recovery.lock().await;
+            *recovery = RecoveryTracker::new();
+        }
+        self.recovery_in_progress.store(false, Ordering::SeqCst);
         let _ = app.emit("server-status", self.state.lock().await.clone());
 
         let mut cmd = Command::new(&exe);
@@ -480,6 +755,7 @@ impl ServerProcess {
         let pid_clone = self.child_pid.clone();
         let stdin_clone = self.child_stdin.clone();
         let app_clone = app.clone();
+        let recovery_clone = self.recovery.clone();
         let log_state = self.state.clone();
         let log_join_requests = self.pending_join_requests.clone();
         let cleanup_join_requests = self.pending_join_requests.clone();
@@ -499,6 +775,11 @@ impl ServerProcess {
             let mut lines = reader.lines();
             while let Ok(Some(_)) = lines.next_line().await {}
 
+            let was_stopping = {
+                let state = state_clone.lock().await;
+                state.status == ServerStatus::Stopping
+            };
+
             {
                 let mut state = state_clone.lock().await;
                 let ended_at = chrono::Local::now().to_rfc3339();
@@ -516,6 +797,15 @@ impl ServerProcess {
             *pid_clone.lock().await = None;
             *stdin_clone.lock().await = None;
             cleanup_join_requests.lock().await.clear();
+
+            if !was_stopping {
+                Self::schedule_recovery_probe(
+                    app_clone.clone(),
+                    Duration::from_secs(0),
+                    "process-exit",
+                    true,
+                );
+            }
         });
 
         // CPU/RAM metrics polling task
@@ -571,20 +861,103 @@ impl ServerProcess {
             let _ = child.wait().await;
         });
 
+        let health_app = app.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS));
+            interval.tick().await;
+
+            loop {
+                interval.tick().await;
+
+                let status = {
+                    let process = health_app.state::<Arc<Mutex<ServerProcess>>>().inner().clone();
+                    let guard = process.lock().await;
+                    let state = guard.state.lock().await;
+                    state.status.clone()
+                };
+
+                match status {
+                    ServerStatus::Stopping => break,
+                    ServerStatus::Stopped => {
+                        let pending_recovery = {
+                            let process = health_app.state::<Arc<Mutex<ServerProcess>>>().inner().clone();
+                            let guard = process.lock().await;
+                            let misses = guard.recovery.lock().await.consecutive_misses;
+                            let has_launch_context = guard.launch_context.lock().await.is_some();
+                            misses > 0 && has_launch_context
+                        };
+                        if !pending_recovery {
+                            break;
+                        }
+                        ServerProcess::schedule_recovery_probe(
+                            health_app.clone(),
+                            Duration::from_secs(0),
+                            "process-stopped",
+                            true,
+                        );
+                    }
+                    ServerStatus::Starting => continue,
+                    ServerStatus::Running => {
+                        ServerProcess::schedule_recovery_probe(
+                            health_app.clone(),
+                            Duration::from_secs(0),
+                            "periodic",
+                            false,
+                        );
+                    }
+                }
+            }
+        });
+
         // Fallback: if process is still alive after 90s but status is still "Starting",
         // the ServerReady pattern didn't match — assume running anyway
         let fallback_state = self.state.clone();
         let fallback_app = app.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(90)).await;
-            let mut state = fallback_state.lock().await;
-            if state.status == ServerStatus::Starting {
-                state.status = ServerStatus::Running;
-                let _ = fallback_app.emit("server-status", state.clone());
+            let players_online = {
+                let mut state = fallback_state.lock().await;
+                if state.status != ServerStatus::Starting {
+                    None
+                } else {
+                    state.status = ServerStatus::Running;
+                    let players_online = state.players.len() as u32;
+                    let _ = fallback_app.emit("server-status", state.clone());
+                    Some(players_online)
+                }
+            };
+
+            if let Some(players_online) = players_online {
+                let snapshot = {
+                    let mut recovery = recovery_clone.lock().await;
+                    recovery.note_bootstrap();
+                    recovery.snapshot(players_online, RecoveryMode::Healthy)
+                };
+                let _ = fallback_app.emit("recovery-status", snapshot);
             }
         });
 
         Ok(())
+    }
+
+    async fn restart_last_launch(&self, app: AppHandle) -> Result<(), String> {
+        let launch = self
+            .launch_context
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| "Kein gespeicherter Startkontext fuer Wiederverbindung".to_string())?;
+
+        let _ = self.stop(app.clone()).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        self.start(
+            &launch.server_root,
+            launch.server_info,
+            launch.learned_noise,
+            app,
+        )
+        .await
     }
 
     pub async fn stop(&self, app: AppHandle) -> Result<(), String> {
@@ -601,6 +974,11 @@ impl ServerProcess {
             state.status = ServerStatus::Stopping;
             let _ = app.emit("server-status", state.clone());
         }
+        {
+            let mut recovery = self.recovery.lock().await;
+            *recovery = RecoveryTracker::new();
+        }
+        self.recovery_in_progress.store(false, Ordering::SeqCst);
 
         #[cfg(target_os = "windows")]
         {

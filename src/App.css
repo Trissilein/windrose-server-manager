@@ -149,7 +149,12 @@ html, body, #root {
 .warning-text { color: var(--yellow); font-size: 12px; }
 
 /* ── Dashboard ───────────────────────────────────────────────────── */
-.dashboard { max-width: 860px; }
+.dashboard {
+  max-width: 1280px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 
 .status-card {
   display: flex;
@@ -177,9 +182,9 @@ html, body, #root {
 /* ── Dashboard 3-panel layout ────────────────────────────────────── */
 .dash-panels {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 0.85fr) minmax(0, 1.4fr);
+  gap: 14px;
+  align-items: start;
 }
 @media (max-width: 820px) {
   .dash-panels { grid-template-columns: 1fr; }
@@ -240,6 +245,159 @@ html, body, #root {
 .info-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
 .info-value { font-size: 16px; font-weight: 600; }
 .invite-row { display: flex; align-items: center; gap: 8px; font-family: var(--mono); }
+
+.badge-muted {
+  background: rgba(102, 110, 153, 0.14);
+  color: var(--muted);
+  border: 1px solid rgba(102, 110, 153, 0.28);
+}
+
+.player-panel { display: flex; flex-direction: column; }
+.player-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.player-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 0 10px;
+}
+.player-hidden-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.player-hidden-header {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.player-card {
+  position: relative;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.player-card.player-online {
+  border-color: rgba(52, 201, 126, 0.35);
+  background: rgba(52, 201, 126, 0.06);
+}
+.player-card.player-hidden {
+  opacity: 0.9;
+}
+.player-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.player-card-name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.player-card-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-card-actions {
+  position: relative;
+  flex-shrink: 0;
+}
+.player-menu-toggle {
+  width: 30px;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 0;
+}
+.player-menu {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  min-width: 170px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.player-menu-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.player-menu-item:hover { background: var(--surface2); }
+.player-menu-item-danger { color: var(--red); }
+.player-menu-item-danger:hover { background: rgba(224, 82, 82, 0.12); }
+.player-card-subline {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+.player-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+.player-card-stat {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.player-card-stat span {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.player-card-stat strong {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 1080px) {
+  .player-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .player-card-subline { flex-direction: column; }
+}
+@media (max-width: 760px) {
+  .player-card-grid { grid-template-columns: 1fr; }
+}
 
 .events-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .player-history-section {

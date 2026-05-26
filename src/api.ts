@@ -61,6 +61,10 @@ export const api = {
   stopServer: () => invoke<void>("stop_server"),
   kickPlayer: (name: string, clientLoginName?: string | null) =>
     invoke<void>("kick_player", { name, clientLoginName: clientLoginName ?? null }),
+  setPlayerHidden: (worldId: string, playerName: string, hidden: boolean) =>
+    invoke<void>("set_player_hidden", { worldId, playerName, hidden }),
+  resetPlayerHistoryEntry: (worldId: string, playerName: string) =>
+    invoke<void>("reset_player_history_entry", { worldId, playerName }),
   getWorldsForLaunch: (serverRoot: string, aliases: Record<string, string>) =>
     invoke<WorldLaunchOption[]>("get_worlds_for_launch", { serverRoot, aliases }),
 

@@ -53,6 +53,7 @@ export type LogCategory =
   | "BackupStart"
   | "BackupDone"
   | "ConnectionInfo"
+  | "ConnectionFailure"
   | "MapLoad"
   | "Auth"
   | "Registration"
@@ -151,6 +152,7 @@ export interface AppConfig {
   backup_path: string;
   world_aliases: Record<string, string>;
   player_history: Record<string, Record<string, PlayerHistoryEntry>>;
+  hidden_players: Record<string, string[]>;
   window: WindowConfig;
   learned_noise: LearnedNoiseEntry[];
   steamcmd_path: string | null;

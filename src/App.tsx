@@ -24,6 +24,7 @@ const DEFAULT_CONFIG: AppConfig = {
   backup_path: "",
   world_aliases: {},
   player_history: {},
+  hidden_players: {},
   window: { x: null, y: null, width: 1200, height: 800 },
   learned_noise: [],
   steamcmd_path: null,
@@ -86,7 +87,7 @@ export default function App() {
       <main className="main-content">
         {/* All tabs stay mounted — CSS visibility preserves state across tab switches */}
         <div style={{ display: tab === "dashboard" ? "block" : "none", height: "100%" }}>
-          <Dashboard config={config} onNavigate={(t) => setTab(t as Tab)} />
+          <Dashboard config={config} onNavigate={(t) => setTab(t as Tab)} onConfigChange={handleConfigChange} />
         </div>
         <div style={{ display: tab === "log" ? "block" : "none", height: "100%" }}>
           <LogViewer events={logEvents} />

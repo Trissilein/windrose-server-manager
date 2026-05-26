@@ -20,6 +20,7 @@ const CAT_META: Record<LogCategory, CatMeta> = {
   WorldLoad:       { label: "Welt",            icon: "🌍", color: "#34c97e", bg: "rgba(52,201,126,0.10)",  border: "rgba(52,201,126,0.30)" },
   MapLoad:         { label: "Karte",           icon: "🗺",  color: "#34c97e", bg: "rgba(52,201,126,0.10)",  border: "rgba(52,201,126,0.30)" },
   ConnectionInfo:  { label: "Verbindung",      icon: "🔗", color: "#4dd0e1", bg: "rgba(77,208,225,0.10)",  border: "rgba(77,208,225,0.30)" },
+  ConnectionFailure:{ label: "Disconnect",      icon: "⟲",  color: "#e05252", bg: "rgba(224,82,82,0.10)",   border: "rgba(224,82,82,0.30)" },
   RegionPing:      { label: "Ping",            icon: "📡", color: "#4dd0e1", bg: "rgba(77,208,225,0.10)",  border: "rgba(77,208,225,0.30)" },
   PlayerConnect:   { label: "Beitritt",        icon: "→",  color: "#b39ddb", bg: "rgba(179,157,219,0.12)", border: "rgba(179,157,219,0.35)" },
   PlayerDisconnect:{ label: "Verlassen",       icon: "←",  color: "#b39ddb", bg: "rgba(179,157,219,0.12)", border: "rgba(179,157,219,0.35)" },
@@ -36,7 +37,7 @@ const CAT_META: Record<LogCategory, CatMeta> = {
 const ALL_CATEGORIES: LogCategory[] = [
   "ServerReady", "ServerInfo", "Auth", "Registration", "Shutdown",
   "WorldLoad", "MapLoad",
-  "ConnectionInfo", "RegionPing",
+  "ConnectionInfo", "ConnectionFailure", "RegionPing",
   "PlayerConnect", "PlayerDisconnect",
   "BackupStart", "BackupDone",
   "Error", "Warning", "Performance", "VersionMismatch",
